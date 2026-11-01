@@ -1,0 +1,30 @@
+# 依赖
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+
+# 本地工作目录（缓存/测试/上传/截图/输出）
+_cache/
+_test/
+_uploads/
+_shots/*
+out/
+err.log
+out.log
+
+# 临时克隆
+_ghprobe/
+!_shots/hero_color_final.png
+!_shots/sheet/
+!_shots/sheet/box_select.png
+!_shots/sheet/explode_lines.png
+!_shots/sheet/frame_drag_parts.png
+!_shots/sheet/frame_sheet.png
+!_shots/sheet/group_left_panel.png
+!_shots/sheet/hlr_analytic.png
+!_shots/sheet/hotspot_edge_anchor.png
+!_shots/sheet/ipc_link.png
+!_shots/sheet/no_border_no_title.png
+!_shots/sheet/yellow_highlight.png

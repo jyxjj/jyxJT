@@ -1,0 +1,8 @@
+﻿{
+  "name": "jt-browser-webjt",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "three": "./static/vendor/three.module.min.js"
+  }
+}

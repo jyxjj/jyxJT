@@ -1,0 +1,3459 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JT Browser — 层级 & 线框预览</title>
+<style>
+  :root{
+    --bg:#15171c; --bg2:#1b1e25; --panel:#1f232b; --line:#2c313b;
+    --fg:#dfe3ea; --dim:#8b94a3; --accent:#4ea1ff; --accent2:#7bd88f;
+  /* 选中高亮统一用黄色 */
+  --sel:#ffc63a; --sel-bg:#3b3320; --sel-bd:#ffc63a;
+    --warn:#e8b45a; --err:#e2696b;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    background:var(--bg); color:var(--fg); overflow:hidden;
+    font:13px/1.45 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+    display:grid; grid-template-rows:44px 1fr; grid-template-columns:340px 1fr;
+    grid-template-areas:"top top" "left right";
+  }
+  /* ---------- 顶栏 ---------- */
+  header{
+    grid-area:top; display:flex; align-items:center; gap:10px; padding:0 12px;
+    background:var(--bg2); border-bottom:1px solid var(--line);
+  }
+  header .logo{font-weight:600;letter-spacing:.4px}
+  header .logo b{color:var(--accent)}
+  .grow{flex:1}
+  button,select,input[type=text]{
+    background:#262b34; color:var(--fg); border:1px solid var(--line);
+    border-radius:6px; padding:5px 10px; font:inherit; cursor:pointer;
+  }
+  button:hover{border-color:#3d4552; background:#2c323d}
+  button.on{background:#22354d; border-color:var(--accent); color:#cfe4ff}
+  button:disabled{opacity:.45;cursor:default}
+  select{padding:5px 6px; max-width:320px}
+  input[type=text]{cursor:text; min-width:150px}
+  .seg{display:flex; gap:0}
+  .seg button{border-radius:0; border-right:none}
+  .seg button:first-child{border-radius:6px 0 0 6px}
+  .seg button:last-child{border-radius:0 6px 6px 0; border-right:1px solid var(--line)}
+  .badge{font-size:11px;padding:1px 6px;border-radius:10px;background:#2b3a4d;color:#9ec4ea}
+  .badge.ok{background:#243a2a;color:#9ad8a8}
+  .badge.warn{background:#3d3220;color:#e8c07a}
+
+  /* ---------- 左：层级 ---------- */
+  aside{
+    grid-area:left; background:var(--panel); border-right:1px solid var(--line);
+    display:flex; flex-direction:column; min-height:0;
+  }
+  .ptitle{
+    padding:8px 12px; border-bottom:1px solid var(--line); font-size:12px;
+    color:var(--dim); display:flex; align-items:center; gap:8px; flex:none;
+  }
+  .ptitle b{color:var(--fg); font-weight:600; font-size:12.5px}
+  .tree-tools{
+    display:flex; gap:6px; padding:6px 10px; border-bottom:1px solid var(--line); flex:none;
+  }
+  .tree-tools input{flex:1; min-width:0}
+  .tree-tools button{padding:4px 8px; font-size:12px}
+  #tree{flex:1; overflow:auto; padding:4px 0 24px}
+  .node{user-select:none}
+  .row{
+    display:flex; align-items:center; gap:6px; padding:3px 10px 3px 0;
+    cursor:pointer; white-space:nowrap; border-left:2px solid transparent;
+  }
+  .row:hover{background:#252a33}
+  .row.sel{background:var(--sel-bg); border-left-color:var(--sel-bd); color:#ffe9a8}
+  .row.sel .nm{color:#ffe9a8; font-weight:600}
+  /* 多选（Ctrl 点）用更亮的黄底，和单选区分 */
+  .row.multi{background:#4a3d12; border-left-color:#ffd93b}
+  .row.multi .nm{color:#ffe9a8}
+
+  /* ===== 主动分组面板 ===== */
+  #groupBox{
+    border-top:1px solid #242c36; background:#12161b;
+    max-height:38vh; display:flex; flex-direction:column; flex:none;
+  }
+  .gtitle{display:flex; align-items:center; gap:6px; padding:6px 10px 4px; font-size:12px; color:#c3d0dd}
+  .gtools{display:flex; align-items:center; gap:6px; padding:0 10px 6px; font-size:11px}
+  .gtools button{padding:2px 7px; font-size:11px; border-radius:5px;
+    border:1px solid #2f3946; background:#1a212a; color:#b9c7d6; cursor:pointer}
+  .gtools button:hover{background:#222c38; border-color:#3d4d61}
+  .gchk{display:flex; align-items:center; gap:4px; color:#8d9cae; cursor:pointer}
+  .glist{overflow:auto; padding:0 8px 8px; font-size:11px}
+  .gitem{display:flex; align-items:center; gap:6px; padding:3px 4px; border-radius:5px}
+  .gitem:hover{background:#1b222b}
+  .gitem .gname{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    color:#d5e2ef; cursor:pointer}
+  .gitem .gname[contenteditable="true"]{outline:1px solid #ffc63a; border-radius:3px; padding:0 2px}
+  .gitem .gn{color:#7d8b9c; flex:none}
+  .gitem button{padding:0 5px; font-size:11px; line-height:16px; border-radius:4px;
+    border:1px solid #2f3946; background:#1a212a; color:#9fb0c2; cursor:pointer}
+  .gitem button:hover{color:#e8705f; border-color:#5a2f2f}
+  .gitem .sw2{width:8px; height:8px; border-radius:50%; flex:none}
+
+  /* ===== IPC 面板 ===== */
+  #ipcBox{border-top:1px solid #242c36;background:#12161b;max-height:30vh;
+    display:flex;flex-direction:column;flex:none}
+  .ipc-item{display:flex;align-items:center;gap:6px;padding:3px 4px;border-radius:5px;font-size:11px}
+  .ipc-item:hover{background:#1b222b}
+  .ipc-item.sel{background:#3b3320;outline:1px solid #ffc63a;border-radius:5px}
+  .ipc-item .iname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    color:#d5e2ef;cursor:pointer}
+  .ipc-item .ioff{color:#7d8b9c;font-variant-numeric:tabular-nums;flex:none;font-size:10px}
+  .ipc-item button{padding:0 5px;font-size:11px;line-height:16px;border-radius:4px;
+    border:1px solid #2f3946;background:#1a212a;color:#9fb0c2;cursor:pointer}
+  .ipc-item button.lock-on{color:#e8b44a;border-color:#5b4a20}
+  .ipc-item button:hover{color:#e6edf5}
+  .gitem.sel{background:#3b3320; outline:1px solid #ffc63a; border-radius:5px}
+  .gitem .glabel{
+    width:34px; flex:none; text-align:center; font-variant-numeric:tabular-nums;
+    background:#0f1319; color:#ffd97a; border:1px solid #2a3340; border-radius:4px;
+    font-size:11px; padding:0 2px;
+  }
+  .gitem .glabel:focus{outline:1px solid #ffc63a}
+  .gitem .gname{cursor:pointer}
+
+  /* 3D 左键框选 */
+  #rubberBand{
+    position:absolute; display:none; z-index:6; pointer-events:none;
+    border:1px solid rgba(255,198,58,.95);
+    background:rgba(255,198,58,.12);
+    box-sizing:border-box;
+  }
+  .row .tw{width:14px; text-align:center; color:var(--dim); font-size:10px; flex:none}
+  .row .eye{width:16px; text-align:center; flex:none; opacity:.75}
+  .row .eye:hover{opacity:1}
+  .row .nm{overflow:hidden; text-overflow:ellipsis}
+  .row .tri{margin-left:auto; color:var(--dim); font-size:11px; padding-left:8px}
+  .row .kdot{width:7px;height:7px;border-radius:2px;flex:none}
+  .k-assembly{background:#e8b45a}
+  .k-part{background:#4ea1ff}
+  .k-instance{background:#8f7bf0}
+  .row.hidden-node .nm{opacity:.38; text-decoration:line-through}
+  .kids.hide{display:none}
+  .empty{padding:14px; color:var(--dim); font-size:12px}
+  #nodeinfo{
+    flex:none; border-top:1px solid var(--line); padding:8px 12px; font-size:12px;
+    color:var(--dim); max-height:34%; overflow:auto; background:#1b1f26;
+  }
+  #nodeinfo b{color:var(--fg)}
+  #nodeinfo table{border-collapse:collapse;width:100%}
+  #nodeinfo td{padding:1px 0;vertical-align:top}
+  #nodeinfo td:first-child{color:var(--dim);width:38%;padding-right:6px}
+  #nodeinfo .val{color:#c9d0da;word-break:break-all}
+
+  /* ---------- 右：3D ---------- */
+  main{grid-area:right; position:relative; background:#0f1114; min-height:0}
+  #view{position:absolute; inset:0}
+  #edgeStatBox{display:none;font-size:11px;line-height:1.6;color:#9fb4c8;
+    background:#0f1319;border:1px solid #232c36;border-radius:5px;padding:5px 7px;
+    margin-top:3px;white-space:pre;font-variant-numeric:tabular-nums}
+  #edgeStatBox b{color:#ffd97a;font-weight:600}
+  .hud{
+    position:absolute; background:rgba(24,28,35,.88); border:1px solid var(--line);
+    border-radius:8px; padding:8px 10px; font-size:12px; color:var(--dim);
+    backdrop-filter:blur(6px);
+  }
+  #hud-tl{top:10px; left:10px; display:flex; flex-direction:column; gap:7px; min-width:210px}
+  #hud-tr{top:10px; right:10px; text-align:right; font-variant-numeric:tabular-nums}
+  #hud-br{bottom:10px; right:10px; font-variant-numeric:tabular-nums}
+  #hud-tl .line{display:flex; align-items:center; gap:8px}
+  #hud-tl .line label{flex:1; color:#b7bfcc}
+  #hud-tl input[type=range]{width:100%}
+  .swatches{display:flex; gap:6px; flex-wrap:wrap}
+  .sw{width:16px;height:16px;border-radius:4px;border:1px solid #3a4150;cursor:pointer}
+  .sw.on{outline:2px solid var(--accent); outline-offset:1px}
+  .stat{color:#9aa4b2}
+  .stat b{color:#e6ebf2;font-weight:600}
+  #drop{
+    position:absolute; inset:0; display:none; align-items:center; justify-content:center;
+    background:rgba(30,60,100,.55); border:2px dashed var(--accent); z-index:20;
+    font-size:15px; color:#dceaf7;
+  }
+  #drop.show{display:flex}
+  .spin{
+    display:inline-block;width:12px;height:12px;border:2px solid #4a5563;
+    border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;
+    vertical-align:-2px; margin-right:6px;
+  }
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .kbd{font:11px ui-monospace,Consolas,monospace;background:#262b34;border:1px solid var(--line);
+       border-radius:4px;padding:0 4px;color:#aab4c2}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:#333a45;border-radius:5px}
+  ::-webkit-scrollbar-track{background:transparent}
+
+  /* ===== 出图面板 ===== */
+  .sheet-panel{
+    position:fixed;top:44px;right:12px;width:430px;max-height:calc(100vh - 60px);
+    background:#161a20;border:1px solid #2a3340;border-radius:10px;z-index:50;
+    display:flex;flex-direction:column;box-shadow:0 18px 48px rgba(0,0,0,.6);
+  }
+  .sp-head{display:flex;align-items:center;justify-content:space-between;
+    padding:10px 12px;border-bottom:1px solid #242c36;font-size:13px}
+  .sp-x{cursor:pointer;color:#8b98a8;padding:0 4px;font-size:14px}
+  .sp-x:hover{color:#e6edf5}
+  .sp-body{padding:10px 12px;overflow:auto;display:flex;flex-direction:column;gap:9px}
+  .sp-row{display:flex;align-items:center;gap:8px;font-size:12px;color:#a9b6c6;flex-wrap:wrap}
+  .sp-row>label:first-child{min-width:52px;color:#7d8b9c}
+  .sp-hint{font-size:11px;color:#6c7a8a;line-height:1.5}
+  .sp-cols{display:flex;flex-direction:column;gap:4px;font-size:11px;color:#9fb0c2;flex:1}
+  .sp-cols select{background:#0f1319;color:#cdd9e5;border:1px solid #2a3340;
+    border-radius:5px;padding:2px 4px;font-size:11px}
+  .sp-report{font-size:11px;line-height:1.55;color:#93a2b3;background:#0f1319;
+    border:1px solid #222a34;border-radius:6px;padding:8px;max-height:170px;overflow:auto;
+    white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace}
+  .sp-report .ok{color:#6fce8f}
+  .sp-report .warn{color:#e0b44a}
+  .sp-report .bad{color:#e8705f}
+  .sp-actions{display:flex;gap:6px}
+  .sp-actions button{flex:1;padding:7px 8px;border-radius:6px;border:1px solid #2f3946;
+    background:#1d242d;color:#c8d5e2;cursor:pointer;font-size:12px}
+  .sp-actions button:hover{background:#243040;border-color:#3d4d61}
+  .sp-actions button.primary{background:#1b4b78;border-color:#2a6ea8;color:#e8f2fb}
+  .sp-actions button.primary:hover{background:#215a8d}
+  .sp-actions button:disabled{opacity:.45;cursor:not-allowed}
+  .sp-preview-box{border-top:1px solid #242c36;padding-top:8px}
+  #spPreviewInner{background:#fff;border-radius:4px;overflow:hidden;margin-top:6px}
+  #spPreviewInner svg{display:block;width:100%;height:auto}
+  .seg button{font-size:11px;padding:4px 7px}
+
+  /* ===== AI 布点 ===== */
+  .ai-box{border:1px solid #242c36;border-radius:7px;padding:6px 8px;background:#12161b}
+  .ai-box>summary{cursor:pointer;font-size:12px;color:#a9b6c6;outline:none}
+  .ai-box[open]>summary{color:#ffd97a;margin-bottom:6px}
+  .ai-fields{display:flex;flex-direction:column;gap:6px}
+  .ai-fields input[type=text],.ai-fields input[type=password]{
+    flex:1;min-width:0;background:#0f1319;color:#cdd9e5;border:1px solid #2a3340;
+    border-radius:5px;padding:3px 6px;font-size:11px;
+  }
+  .ai-fields input:focus{outline:1px solid #ffc63a}
+  .nx-sel{background:#0f1319;color:#cdd9e5;border:1px solid #2a3340;border-radius:5px;
+    padding:3px 6px;font-size:11px;flex:1}
+
+  /* ===== A4 取景框（盖在 3D 视图上） ===== */
+  #frameOverlay{
+    position:absolute;inset:0;pointer-events:none;display:none;z-index:5;
+  }
+  #frameOverlay.on{display:block}
+  #frameBox{
+    position:absolute;box-sizing:border-box;
+    border:1px solid rgba(120,200,255,.55);
+    background:rgba(120,200,255,.03);
+    box-shadow:0 0 0 9999px rgba(6,8,11,.55);  /* 框外压暗 */
+  }
+  #frameBox .fz{
+    position:absolute;left:0;right:0;
+    background:repeating-linear-gradient(45deg,
+      rgba(255,255,255,.05) 0 4px, transparent 4px 8px);
+    border-bottom:1px dashed rgba(255,255,255,.18);
+  }
+  #frameBox .fz.top{top:0;border-bottom:1px dashed rgba(255,255,255,.18);border-top:none}
+  #frameBox .fz.bottom{bottom:0;border-top:1px dashed rgba(255,255,255,.18);border-bottom:none}
+  #frameContent{
+    position:absolute;left:0;right:0;box-sizing:border-box;
+    border:1px solid rgba(140,230,170,.85);
+    background:rgba(140,230,170,.04);
+  }
+  #frameLabel{
+    position:absolute;left:0;top:-19px;font-size:11px;color:#9fe3b8;
+    white-space:nowrap;font-variant-numeric:tabular-nums;
+  }
+  #frameLabel b{color:#cdeed9}
+  .drag-cursor{cursor:grab !important}
+  .drag-cursor.dragging{cursor:grabbing !important}
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "/static/vendor/three.module.min.js",
+    "three/addons/": "/static/vendor/addons/"
+} }
+</script>
+</head>
+<body>
+<header>
+  <div class="logo">JT <b>Browser</b></div>
+  <select id="samples" title="样本目录 D:\JT\sample"></select>
+  <button id="btnRefresh" title="刷新样本列表">刷新</button>
+  <input id="pathInput" type="text" placeholder="或粘贴 .jt / 文件夹路径后回车" style="width:230px" />
+  <div class="grow"></div>
+  <div class="seg" id="shadeSeg">
+    <button data-shade="solid">实体</button>
+    <button data-shade="wire">线框</button>
+    <button data-shade="both">实体+线框</button>
+  </div>
+  <button id="btnEdges" title="显示三角面边线（线框模式）">边线</button>
+  <button id="btnFit" title="缩放到全部 (F)">适合窗口</button>
+  <button id="btnFrame" title="在 3D 视图上叠加 A4 取景框；框内所见即所得地转线条">取景框</button>
+  <button id="btnReset" title="把移动过的零件还原到装配原位">复位</button>
+  <button id="btnSheet" title="分组 + Excel → A4 二维线图（CGM / SVG）">出图</button>
+  <button id="btnLink" title="在 3D 里点两个点连一条线，这条线会画到 2D 图纸上">连线</button>
+  <button id="btnUndo" title="撤销上一步移动 (Ctrl+Z)">撤销</button>
+  <div class="grow"></div>
+  <span id="status" class="stat">就绪</span>
+</header>
+
+<!-- ===================== 出图面板 ===================== -->
+<div id="sheetPanel" class="sheet-panel" style="display:none">
+  <div class="sp-head">
+    <b>二维出图</b>
+    <span id="spClose" class="sp-x" title="关闭">✕</span>
+  </div>
+
+  <div class="sp-body">
+    <div class="sp-row">
+      <label>分组表</label>
+      <input id="spFile" type="file" accept=".xlsx,.csv" style="flex:1;min-width:0" />
+    </div>
+    <div id="spFileInfo" class="sp-hint">未选择。支持 .xlsx / .csv</div>
+
+    <div class="sp-row">
+      <label>版面</label>
+      <div class="seg" id="spMode">
+        <button data-mode="grid" class="on">分格（每个零件一格）</button>
+        <button data-mode="single">整机（叠加）</button>
+      </div>
+    </div>
+
+    <div class="sp-row">
+      <label>视向</label>
+      <div class="seg" id="spView">
+        <button data-view="iso" class="on">等轴测</button>
+        <button data-view="current">当前视角</button>
+        <button data-view="front">前视</button>
+        <button data-view="top">俯视</button>
+        <button data-view="right">右视</button>
+      </div>
+    </div>
+
+    <div class="sp-row">
+      <label>图册</label>
+      <input id="spPlate" type="checkbox" checked title="对齐 HTEAM-04021 模板：整机单视图、无图框/图例、左上角写图册号、热点=数字+短引线" />
+      <label for="spDrawingNo" style="min-width:auto">图号</label>
+      <input id="spDrawingNo" type="text" placeholder="HTEAM-04021"
+             style="flex:1;min-width:0;background:#0f1319;color:#cdd9e5;border:1px solid #2a3340;border-radius:5px;padding:3px 6px;font-size:12px" />
+    </div>
+    <div class="sp-hint">图号同时用于页面左上角、CGM metafile 名，以及 .cgm / .svg / .gif 的文件名。</div>
+
+    <div class="sp-row">
+      <label>列映射</label>
+      <div id="spCols" class="sp-cols">选分组表后自动识别，可手动改</div>
+    </div>
+
+    <div class="sp-row">
+      <label><input id="spLegend" type="checkbox" checked /> 画热点图例表</label>
+      <label><input id="spUnmatched" type="checkbox" checked /> 给未匹配分组也编号</label>
+    </div>
+
+    <div class="sp-row">
+      <label>隐藏线</label>
+      <label><input id="spHlr" type="checkbox" checked /> 消除（慢一点，线条干净）</label>
+    </div>
+
+    <div id="spReport" class="sp-report">未生成</div>
+
+    <!-- AI 布点：让模型给热点挑最优位置；URL / Key 自己填 -->
+    <details id="aiBox" class="ai-box">
+      <summary>AI 自动布点（可选）</summary>
+      <div class="ai-fields">
+        <div class="sp-row">
+          <label>接口</label>
+          <input id="aiUrl" type="text" placeholder="https://api.deepseek.com/v1/chat/completions" />
+        </div>
+        <div class="sp-row">
+          <label>Key</label>
+          <input id="aiKey" type="password" placeholder="sk-..." autocomplete="off" />
+        </div>
+        <div class="sp-row">
+          <label>模型</label>
+          <input id="aiModel" type="text" placeholder="deepseek-chat" />
+        </div>
+        <div class="sp-row" style="gap:6px">
+          <button id="btnAiPlace" class="primary" style="flex:1">AI 布点</button>
+          <button id="btnAiClear" title="恢复本地算法排版">清除 AI 结果</button>
+        </div>
+        <div id="aiStatus" class="sp-hint">Key 只经过本机 127.0.0.1 转发，不落盘、不上传到别处。</div>
+      </div>
+    </details>
+
+    <div class="sp-actions">
+      <button id="spPreview" class="primary">预览 A4</button>
+      <button id="spPlateExport" title="一次生成同名 .cgm / .svg / .gif，写到 webjt/out/">生成图册三件套</button>
+    </div>
+    <div class="sp-actions">
+      <button id="spCgm">下载 CGM</button>
+      <button id="spSvg">下载 SVG</button>
+    </div>
+
+    <div id="spPreviewBox" class="sp-preview-box" style="display:none">
+      <div class="sp-hint">A4 预览（210×297mm，按屏幕缩放）</div>
+      <div id="spPreviewInner"></div>
+    </div>
+  </div>
+</div>
+
+<aside>
+  <div class="ptitle"><b>装配层级</b><span id="docBadge" class="badge" style="display:none"></span></div>
+  <div class="tree-tools">
+    <input id="filter" type="text" placeholder="过滤节点名…" />
+    <button id="btnExpand">展开</button>
+    <button id="btnCollapse">折叠</button>
+  </div>
+  <div id="tree"><div class="empty">从上方选一个 JT 样本，或把 .jt 文件拖进来</div></div>
+
+  <!-- 主动分组：自己决定哪些节点算一组（每组 = 出图上的一个热点） -->
+  <div id="groupBox">
+    <div class="gtitle">
+      <b>分组</b>
+      <span id="gCount" class="badge" style="display:none"></span>
+      <div class="grow"></div>
+      <button id="btnNewGroup" title="把左侧选中的节点（可 Ctrl 多选）建成一组">+ 建组</button>
+    </div>
+    <div class="gtools">
+      <label class="gchk"><input id="gUse" type="checkbox" /> 用自定义分组出图</label>
+      <button id="btnTpl" title="下载 Excel 模板（含当前分组名）">Excel 模板</button>
+      <button id="btnClearGroups" title="清空所有自定义分组">清空</button>
+    </div>
+    <div id="groupList" class="glist"><div class="empty">还没有分组。Ctrl/⌘ 点树里多个节点 → 点「+ 建组」</div></div>
+  </div>
+
+  <!-- IPC：可移动的装配单元。默认那个整体 IPC 是锁定的，自己加的可以移动 -->
+  <div id="ipcBox">
+    <div class="gtitle">
+      <b>IPC</b>
+      <span id="ipcCount" class="badge" style="display:none"></span>
+      <div class="grow"></div>
+      <button id="btnNewIpc" title="把左侧选中的节点做成一个可移动 IPC">+ 添加</button>
+      <button id="btnUndo2" title="撤销上一步移动 (Ctrl+Z)">撤销</button>
+    </div>
+    <div id="ipcList" class="glist"></div>
+  </div>
+
+  <div id="nodeinfo" style="display:none"></div>
+</aside>
+
+<main>
+  <div id="view">
+  <div id="frameOverlay">
+    <div id="frameBox">
+      <div class="fz top"></div>
+      <div class="fz bottom"></div>
+      <div id="frameContent"><div id="frameLabel"></div></div>
+    </div>
+  </div>
+  <div id="rubberBand"></div>
+</div>
+  <div id="hud-tl" class="hud">
+    <div class="line"><label>线框透明度</label></div>
+    <div class="line"><input id="dens" type="range" min="0" max="1" step="0.01" value="0.5" /></div>
+    <div class="line"><label>背景</label>
+      <div class="swatches" id="bgs">
+        <div class="sw on" data-bg="#0f1114" style="background:#0f1114"></div>
+        <div class="sw" data-bg="#2a2f38" style="background:#2a2f38"></div>
+        <div class="sw" data-bg="#e9edf2" style="background:#e9edf2"></div>
+      </div>
+    </div>
+    <div class="line"><label>显示</label></div>
+    <div class="line" style="gap:6px">
+      <button id="btnAxes" class="on">坐标轴</button>
+      <button id="btnGrid" class="on">网格</button>
+      <button id="btnEdgeStat" title="选中零件后显示它的边统计（排查多出来的线用）">边统计</button>
+    </div>
+    <div id="edgeStatBox"></div>
+    <div class="line"><label>颜色</label>
+      <div class="seg" id="colorSeg" style="display:flex">
+        <button data-color="original" class="on" title="使用 JT 里的材质颜色">JT 原色</button>
+        <button data-color="grey" title="统一灰度，便于看结构">单色</button>
+      </div>
+    </div>
+  </div>
+  <div id="hud-tr" class="hud">
+    <div class="stat">三角面 <b id="stTri">0</b></div>
+    <div class="stat">零件 <b id="stPart">0</b></div>
+    <div class="stat">包围盒 <b id="stBox">–</b></div>
+  </div>
+  <div id="hud-br" class="hud">
+    <span class="kbd">左键</span> 旋转 ·
+    <span class="kbd">中键</span> 平移 ·
+    <span class="kbd">滚轮</span> 缩放 ·
+    <span class="kbd">F</span> 适合
+  </div>
+  <div id="drop">松开以打开 .jt 文件</div>
+</main>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/OrbitControls.js';
+import {
+  A4 as A4SHEET,
+  FRAME,
+  frameContentRect,
+  screenFrameMapper,
+  projectManyScreen,
+  clipSegmentsToRect,
+  collectGroups, projectGroup, removeHiddenLines, removeHiddenLinesGrouped, removeHiddenLinesGroupedVisible, buildSheet, edgeStats, sheetToSVG, sheetPageToSVG, sheetToSVGMultiPage, checkHotspotOverlap,
+} from '/static/js/drawing.js';
+const A4 = A4SHEET;
+import { sheetToCgm } from '/static/js/sheetcgm.js';
+import { readWorkbook } from '/static/js/xlsx.js';
+import { matchSheet, formatReport, detectColumns } from '/static/js/hotspot-map.js';
+import { buildPlacementPayload, aiPlaceHotspots, sanitizePositions } from '/static/js/ai-place.js';
+
+/* ============================ 状态 ============================ */
+const S = {
+  docId: null,
+  root: null,          // 树的 JSON
+  nodes: new Map(),    // key -> {json, rowEl, kidsEl, visible, loaded}
+  meshes: new Map(),   // key -> {group, ...}
+  selKey: null,
+  shade: 'solid',
+  edges: true,
+  density: 0,
+  bg: '#0f1114',
+  colorMode: 'original',   // original | grey
+  multiSel: new Set(),     // Ctrl 点 / Shift 连选 / 3D 框选 出来的多选
+  groups: [],              // 自定义分组 [{id, name, label, keys:[nodeKey]}]
+  lastClickedKey: null,    // Shift 连选的锚点
+  selGroupId: null,        // 当前点选的分组
+  /* --- 3D 连线 --- */
+  links: [],               // [{id, a:{key,local:[x,y,z]}, b:{key,local:[x,y,z]}}]
+  linkMode: false,
+  linkPending: null,       // 连线的第一个点
+  /* --- IPC（可移动的装配单元） --- */
+  ipcs: [],                // [{id, name, keys:[], locked, offset:{x,y,z}}]
+  selIpcId: null,
+  /* --- 撤销栈（只记零件/整体的位置） --- */
+  undoStack: [],
+};
+
+/* ============================ 3D 场景 ============================ */
+const viewEl = document.getElementById('view');
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(viewEl.clientWidth || 800, viewEl.clientHeight || 600);
+renderer.localClippingEnabled = true;
+renderer.domElement.style.display = 'block';
+renderer.domElement.style.width = '100%';
+renderer.domElement.style.height = '100%';
+viewEl.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(S.bg);
+
+const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 1e7);
+camera.position.set(3, 2, 4);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.12;
+controls.screenSpacePanning = true;
+/*
+ * 鼠标分工（按需求）：
+ *   左键 = 旋转视角；左键"只点不动"= 选取零件
+ *   中键 = 平移视角
+ *   左键 = 单击选取 / 拖动=框选；Alt+左键拖动 = 旋转视角
+ *   中键 = 平移视角
+ *   右键 = 拖动选中的零件/装配（不再给 OrbitControls 用）
+ */
+controls.mouseButtons = {
+  LEFT: THREE.MOUSE.ROTATE,   // 仅 Alt+左键时临时打开（见 pointerdown）
+  MIDDLE: THREE.MOUSE.PAN,
+  RIGHT: null,
+};
+controls.enableRotate = false;   // 默认左键不转，交给框选
+// 触屏：单指旋转、双指缩放/平移（右键拖动在触屏上不适用）
+controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+
+// 环境光给足：JT 的颜色值本身偏暗（多在 0.02–0.7），需要补光才接近 NX 观感
+scene.add(new THREE.AmbientLight(0xffffff, 1.15));
+const key = new THREE.DirectionalLight(0xffffff, 1.35); key.position.set(4, 7, 5); scene.add(key);
+const fill = new THREE.DirectionalLight(0xcfe0f2, 0.85); fill.position.set(-6, -3, -4); scene.add(fill);
+const rim = new THREE.DirectionalLight(0xffffff, 0.6); rim.position.set(0, -6, 6); scene.add(rim);
+const head = new THREE.DirectionalLight(0xffffff, 0.35); head.position.set(0, 0, 1); scene.add(head);
+
+const modelRoot = new THREE.Group();
+scene.add(modelRoot);
+
+// 坐标轴 + 地面网格
+const axes = new THREE.Group();
+const axLen = 1;
+[[1,0,0,0xff5d5d],[0,1,0,0x62d162],[0,0,1,0x5d9dff]].forEach(([x,y,z,c])=>{
+  const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(x,y,z)]);
+  axes.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: c, depthTest: false, transparent: true, opacity: .9 })));
+});
+axes.renderOrder = 999;
+scene.add(axes);
+
+let grid = null;
+function rebuildGrid(size){
+  if (grid){ scene.remove(grid); grid.geometry.dispose(); grid.material.dispose(); }
+  const s = Math.max(size, 1e-6);
+  const step = Math.pow(10, Math.floor(Math.log10(s/10)));
+  grid = new THREE.GridHelper(step*20, 20, 0x3a424f, 0x242a33);
+  grid.position.y = 0;
+  grid.material.transparent = true;
+  grid.material.opacity = 0.55;
+  grid.visible = document.getElementById('btnGrid').classList.contains('on');
+  scene.add(grid);
+}
+
+/* ============================ 渲染循环 ============================ */
+function resize(){
+  const w = viewEl.clientWidth, h = viewEl.clientHeight;
+  if (!w || !h) return;
+  renderer.setSize(w, h);          // updateStyle=true：同步 canvas 的 CSS 尺寸
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(()=>{ resize(); if (FR.on) layoutFrame(); }).observe(viewEl);
+resize();
+
+renderer.setAnimationLoop(()=>{
+  controls.update();
+  renderer.render(scene, camera);
+});
+
+/* ============================ 屏蔽浏览器手势 ============================ */
+/*
+ * 3D 视图要独占鼠标：
+ *   · 右键拖动 → 屏蔽右键菜单
+ *   · 触屏 → touch-action:none，禁掉滚动/双击缩放/长按选择
+ *   · Ctrl+滚轮 → 屏蔽页面缩放（滚轮留给相机）
+ *   · 拖拽文件到画布 → 由 app 自己的上传逻辑处理，先禁掉浏览器默认打开行为
+ */
+(function blockBrowserGestures() {
+  const el = renderer.domElement;
+  const view = viewEl;          // 注意用前面已声明的 viewEl，viewEl2 在本段之后才定义
+
+  el.style.touchAction = 'none';
+  el.style.userSelect = 'none';
+  el.style.webkitUserSelect = 'none';
+  view.style.touchAction = 'none';
+
+  // 右键菜单（画布内和取景框上都要拦）
+  for (const node of [el, view]) {
+    node.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      return false;
+    }, { capture: true });
+  }
+
+  // Ctrl/⌘ + 滚轮 = 浏览器页面缩放，拦掉
+  el.addEventListener('wheel', (e) => {
+    if (e.ctrlKey || e.metaKey) { e.preventDefault(); }
+  }, { passive: false });
+
+  // 触屏：禁掉双击缩放与长按选择
+  el.addEventListener('dblclick', (e) => e.preventDefault());
+  el.addEventListener('gesturestart', (e) => e.preventDefault());
+  el.addEventListener('gesturechange', (e) => e.preventDefault());
+  el.addEventListener('selectstart', (e) => e.preventDefault());
+
+  // 拖文件到画布：交给应用自己的 drop 处理（已存在），只挡浏览器的默认导航
+  el.addEventListener('dragover', (e) => { e.preventDefault(); });
+  el.addEventListener('drop', (e) => { e.preventDefault(); });
+
+  // 右键按下时不要触发浏览器的"另存/查看"等
+  el.addEventListener('mousedown', (e) => {
+    if (e.button === 2) e.preventDefault();
+  });
+})();
+
+/* ============================ 材质 ============================ */
+// 选中高亮：颜色统一黄色（与左侧树选中行一致）。
+//
+// 这里有个坑：场景光很足（环境光 1.15 + 4 个平行光），直接把基色设成亮黄
+// 会被光照推到接近白色（看着发粉/发白）。所以做法是：
+//   基色 → 混成黄 → **整体压暗**（SEL_VALUE），让光照把它提回饱和的黄。
+const SEL_COLOR = new THREE.Color(0xffd93b);
+const SEL_MIX = 0.92;         // 基色朝黄色混合的比例
+const SEL_VALUE = 0.50;       // 混合后再压暗，抵消强光
+const SEL_EMISSIVE = 0x000000;
+const SEL_EMISSIVE_INTENSITY = 0;
+
+const MAT = {
+  wire: new THREE.MeshBasicMaterial({
+    color: 0x7fd6ff, wireframe: true, transparent: true, opacity: 0.85,
+  }),
+  selWire: new THREE.MeshBasicMaterial({
+    color: 0xffc63a, wireframe: true, transparent: true, opacity: 0.95,
+  }),
+  edge: new THREE.LineBasicMaterial({ color: 0x2c3d4d, transparent: true, opacity: 0.75 }),
+  selEdge: new THREE.LineBasicMaterial({ color: 0xffb84d, transparent: true, opacity: 0.95 }),
+};
+
+
+
+
+/* 按 JT 里的材质建材质；没有颜色数据时退回中性灰。
+ * 用 Phong 而不是 Standard：PBR 的 metalness 需要环境贴图才不发黑，
+ * 而 JT 的 specular 推出来的金属度会让零件在无 IBL 场景里变黑。
+ */
+function makeSolidMaterial(mat){
+  const c = (mat && mat.color) ? mat.color : [0.62, 0.66, 0.71];
+  const spec = (mat && mat.specular) ? mat.specular : [0.15, 0.15, 0.15];
+  const shin = (mat && Number.isFinite(mat.shininess)) ? mat.shininess : 30;
+  const opacity = (mat && Number.isFinite(mat.opacity)) ? mat.opacity : 1;
+
+  const m = new THREE.MeshPhongMaterial({
+    color: new THREE.Color(
+      THREE.MathUtils.clamp(c[0], 0.02, 1),
+      THREE.MathUtils.clamp(c[1], 0.02, 1),
+      THREE.MathUtils.clamp(c[2], 0.02, 1)
+    ),
+    specular: new THREE.Color(
+      THREE.MathUtils.clamp(spec[0] * 0.6 + 0.12, 0, 1),
+      THREE.MathUtils.clamp(spec[1] * 0.6 + 0.12, 0, 1),
+      THREE.MathUtils.clamp(spec[2] * 0.6 + 0.12, 0, 1)
+    ),
+    shininess: THREE.MathUtils.clamp(shin, 4, 200),
+    side: THREE.DoubleSide,
+    transparent: opacity < 0.999,
+    opacity,
+    polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+  });
+  m.userData.baseColor = m.color.clone();
+  return m;
+}
+
+/* ============================ 网格解析（JTM2 二进制） ============================ */
+function parseJTM(buf){
+  const dv = new DataView(buf);
+  const magic = String.fromCharCode(dv.getUint8(0),dv.getUint8(1),dv.getUint8(2),dv.getUint8(3));
+  if (magic !== 'JTM1' && magic !== 'JTM2') throw new Error('网格数据头不正确: ' + magic);
+  const nv = dv.getUint32(4, true);
+  const nt = dv.getUint32(8, true);
+  const bbox = [];
+  for (let i = 0; i < 6; i++) bbox.push(dv.getFloat32(12 + i*4, true));
+
+  let offPos = 12 + 24;
+  let material = null;
+  if (magic === 'JTM2'){
+    const f = [];
+    for (let i = 0; i < 8; i++) f.push(dv.getFloat32(offPos + i*4, true));
+    material = {
+      color: [f[0], f[1], f[2]],
+      specular: [f[3], f[4], f[5]],
+      shininess: f[6],
+      opacity: f[7],
+    };
+    offPos += 32;
+  }
+
+  const pos = new Float32Array(buf, offPos, nv*3);
+  const nrm = new Float32Array(buf, offPos + nv*12, nv*3);
+  const idx = new Uint32Array(buf, offPos + nv*24, nt*3);
+  return { pos, nrm, idx, nv, nt, bbox, material };
+}
+
+/* ============================ 网格加载 ============================ */
+async function loadMesh(key){
+  if (S.meshes.has(key)) return S.meshes.get(key);
+  const url = `/api/mesh/${S.docId}?key=${encodeURIComponent(key)}`;
+  const res = await fetch(url);
+  if (!res.ok){
+    S.meshes.set(key, null);
+    return null;
+  }
+  const buf = await res.arrayBuffer();
+  const d = parseJTM(buf);
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(d.pos, 3));
+  geo.setAttribute('normal',   new THREE.BufferAttribute(d.nrm, 3));
+  geo.setIndex(new THREE.BufferAttribute(new Uint32Array(d.idx), 1));
+  geo.computeBoundingSphere();
+
+  const group = new THREE.Group();
+  group.name = key;
+
+  const body = new THREE.Mesh(geo, makeSolidMaterial(d.material));
+  body.userData.key = key;
+  group.add(body);
+
+  const wire = new THREE.Mesh(geo, MAT.wire.clone());
+  wire.visible = false;
+  wire.userData.isWire = true;
+  group.add(wire);
+
+  let edge = null;
+  if (S.edges && needsEdges()){
+    const eg = new THREE.EdgesGeometry(geo, 20);
+    edge = new THREE.LineSegments(eg, MAT.edge.clone());
+    edge.userData.isEdge = true;
+    edge.visible = false;
+    group.add(edge);
+  }
+
+  const rec = { group, body, wire, edge, nv: d.nv, nt: d.nt, bbox: d.bbox, material: d.material };
+  S.meshes.set(key, rec);
+  applyShadeTo(rec, S.selKey === key);
+  return rec;
+}
+
+/* 只在需要看的模式（线框 / 实体+线框）下才生成三角边线，避免大装配卡顿 */
+function needsEdges(){ return S.edges && S.shade !== 'solid'; }
+
+function ensureEdge(rec){
+  if (rec.edge || !needsEdges()) return rec.edge;
+  const eg = new THREE.EdgesGeometry(rec.body.geometry, 20);
+  rec.edge = new THREE.LineSegments(eg, MAT.edge.clone());
+  rec.edge.userData.isEdge = true;
+  rec.group.add(rec.edge);
+  return rec.edge;
+}
+
+/**
+ * 给一个零件刷显示状态。
+ *
+ * 选中高亮要"一眼是黄"：单纯加黄色自发光在深蓝零件上会混成淡紫，
+ * 所以选中时把**基色朝黄色混合**，再叠一点暖色自发光。
+ * 取消选中按当前颜色模式（JT 原色 / 单色）还原基色。
+ */
+function applyShadeTo(rec, selected){
+  if (!rec) return;
+  const solidOn = (S.shade === 'solid' || S.shade === 'both');
+  const wireOn  = (S.shade === 'wire'  || S.shade === 'both');
+
+  rec.body.visible = solidOn;
+
+  const mat = rec.body.material;
+  const grey = S.colorMode === 'grey';
+  const base = mat.userData.baseColor;
+  if (selected){
+    const from = grey ? new THREE.Color(0.62, 0.66, 0.71) : (base ? base.clone() : mat.color.clone());
+    mat.color.copy(from).lerp(SEL_COLOR, SEL_MIX).multiplyScalar(SEL_VALUE);
+    mat.emissive.setHex(SEL_EMISSIVE);
+    mat.emissiveIntensity = SEL_EMISSIVE_INTENSITY;
+    /*
+     * 透视高亮：装配里很多零件在壳体内部，关掉深度测试 + 提高 renderOrder，
+     * 让选中的零件"透出来"显示，否则点选/框选完了在 3D 里看不到任何反应。
+     */
+    mat.depthTest = false;
+    rec.body.renderOrder = 10;
+  } else {
+    if (grey) mat.color.setRGB(0.62, 0.66, 0.71);
+    else if (base) mat.color.copy(base);
+    mat.emissive.setHex(0x000000);
+    mat.emissiveIntensity = 0;
+    mat.depthTest = true;
+    rec.body.renderOrder = 0;
+  }
+
+  rec.wire.visible = wireOn;
+  rec.wire.material = selected ? MAT.selWire : MAT.wire;
+
+  if (wireOn && S.edges) ensureEdge(rec);
+  if (rec.edge){
+    rec.edge.visible = S.edges && wireOn;
+    rec.edge.material = selected ? MAT.selEdge : MAT.edge;
+  }
+}
+
+/* 颜色模式：原始 / 单色（用于看清结构）；选中项保持黄色 */
+function applyColorMode(){
+  applyShadeAll();
+}
+
+/** 一个零件是否处于"选中/高亮"状态（单选 + 多选都算） */
+function isHighlighted(key) {
+  return key === S.selKey || S.multiSel.has(key);
+}
+
+function applyShadeAll(){
+  for (const [k, rec] of S.meshes) applyShadeTo(rec, isHighlighted(k));
+}
+
+/* ============================ 边统计（调试） ============================ */
+/*
+ * 排查"出图线条比预期多"时用：勾上后选中任意零件，
+ * 左上角显示它的顶点/三角/边数，并且把边分成
+ *   边界（只被 1 个三角用）/ 特征（跨曲面）/ 平滑（被合并，不画）
+ * 三档。数字对不上就说明提边判据在这个零件上没按预期工作。
+ */
+let edgeStatOn = false;
+
+function showEdgeStat(key){
+  const box = document.getElementById('edgeStatBox');
+  if (!edgeStatOn) { box.style.display = 'none'; return; }
+  const rec = S.meshes.get(key);
+  if (!rec || !rec.body) {
+    box.style.display = 'block';
+    box.textContent = '选中项不是零件（没有网格）';
+    return;
+  }
+  const t0 = performance.now();
+  const st = edgeStats(rec.body.geometry, 25);
+  const dt = Math.round(performance.now() - t0);
+  const name = key.split('/').pop();
+  box.style.display = 'block';
+  box.innerHTML =
+    '<b>' + name + '</b>\n' +
+    '顶点 ' + st.verts + '   三角 ' + st.tris + '\n' +
+    '边 ' + st.edges + '\n' +
+    '  边界 ' + st.boundary + '（只被 1 个三角用）\n' +
+    '  特征 ' + st.feature + '（会画）\n' +
+    '  平滑 ' + st.smooth + '（合并掉，不画）\n' +
+    '尺寸 ' + st.bbox.map((v) => v.toFixed(2)).join(' × ') + '\n' +
+    '<span style="color:#6b7b8c">' + dt + ' ms</span>';
+}
+
+document.getElementById('btnEdgeStat').addEventListener('click', (e) => {
+  edgeStatOn = !edgeStatOn;
+  e.currentTarget.classList.toggle('on', edgeStatOn);
+  if (edgeStatOn && S.selKey) showEdgeStat(S.selKey);
+  else document.getElementById('edgeStatBox').style.display = 'none';
+});
+
+
+/* ============================ 树渲染 ============================ */
+const treeEl = document.getElementById('tree');
+
+function kindClass(k){ return k === 'assembly' ? 'k-assembly' : (k === 'instance' ? 'k-instance' : 'k-part'); }
+
+function buildTree(root){
+  S.nodes.clear();
+  S.nodeByKey = new Map();          // key → 树节点 JSON（找子树用）
+  clearModel();
+  treeEl.innerHTML = '';
+  if (!root){ treeEl.innerHTML = '<div class="empty">该文件没有层级数据</div>'; return; }
+  (function index(n){
+    if (!n) return;
+    S.nodeByKey.set(n.key, n);
+    for (const c of n.children || []) index(c);
+  })(root);
+
+  const wrap = document.createElement('div');
+  wrap.className = 'node';
+  treeEl.appendChild(wrap);
+  renderNode(root, wrap, 0);
+  updateStats();
+}
+
+function renderNode(json, parentEl, depth){
+  const nodeEl = document.createElement('div');
+  nodeEl.className = 'node';
+
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.style.paddingLeft = (6 + depth*14) + 'px';
+  row.dataset.key = json.key;
+
+  const hasKids = json.children && json.children.length > 0;
+  const tw = document.createElement('span');
+  tw.className = 'tw';
+  tw.textContent = hasKids ? '▼' : '';
+  row.appendChild(tw);
+
+  const eye = document.createElement('span');
+  eye.className = 'eye';
+  eye.textContent = '👁';
+  eye.title = '显示/隐藏';
+  row.appendChild(eye);
+
+  const dot = document.createElement('span');
+  dot.className = 'kdot ' + kindClass(json.kind);
+  dot.title = json.kind;
+  row.appendChild(dot);
+
+  const nm = document.createElement('span');
+  nm.className = 'nm';
+  nm.textContent = json.name;
+  nm.title = json.key;
+  row.appendChild(nm);
+
+  const tri = document.createElement('span');
+  tri.className = 'tri';
+  tri.textContent = json.tris ? fmt(json.tris) : '';
+  row.appendChild(tri);
+
+  nodeEl.appendChild(row);
+
+  const kids = document.createElement('div');
+  kids.className = 'kids';
+  nodeEl.appendChild(kids);
+
+  parentEl.appendChild(nodeEl);
+
+  const rec = { json, rowEl: row, kidsEl: kids, nodeEl, visible: true, loaded: false, triEl: tri };
+  S.nodes.set(json.key, rec);
+
+  if (hasKids) json.children.forEach(c => renderNode(c, kids, depth + 1));
+
+  // 折叠
+  tw.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    if (!hasKids) return;
+    const hide = !kids.classList.contains('hide');
+    kids.classList.toggle('hide', hide);
+    tw.textContent = hide ? '▶' : '▼';
+  });
+  // 显隐
+  eye.addEventListener('click', async (e)=>{
+    e.stopPropagation();
+    rec.visible = !rec.visible;
+    row.classList.toggle('hidden-node', !rec.visible);
+    await selVisible(rec);
+  });
+  // 选中
+  row.addEventListener('click', (e) => {
+    /*
+     * 左树三种选取方式：
+     *   单击        = 只选这一个
+     *   Ctrl / ⌘ 点 = 切换这一个（多选）
+     *   Shift 点    = 从上次点击的位置连选到这一个
+     */
+    if (e.shiftKey) {
+      selectRangeTo(json.key);
+      return;
+    }
+    if (e.ctrlKey || e.metaKey) {
+      toggleMultiSelect(json.key);
+      S.lastClickedKey = json.key;
+      return;
+    }
+    S.multiSel.clear();
+    refreshMultiSelClasses();
+    S.lastClickedKey = json.key;
+    selectNode(json.key);
+  });
+}
+
+/** 树里的节点顺序（按当前显示顺序，用于 Shift 连选） */
+function orderedTreeKeys() {
+  const out = [];
+  for (const k of S.nodes.keys()) out.push(k);
+  return out;
+}
+
+/** Shift 连选：从 lastClickedKey 到 key 之间的所有节点都选中 */
+function selectRangeTo(key) {
+  const order = orderedTreeKeys();
+  const a = order.indexOf(S.lastClickedKey);
+  const b = order.indexOf(key);
+  if (a < 0 || b < 0) {
+    // 没有锚点：退化成单选
+    S.multiSel.clear();
+    refreshMultiSelClasses();
+    S.lastClickedKey = key;
+    selectNode(key);
+    return;
+  }
+  const [lo, hi] = a <= b ? [a, b] : [b, a];
+  S.multiSel.clear();
+  for (let i = lo; i <= hi; i++) S.multiSel.add(order[i]);
+  refreshMultiSelClasses();
+  // 让最后一个成为主选中，这样 3D 里至少有一个是"当前节点"
+  selectNode(key);
+  updateGroupUI();
+  setStatus(`Shift 连选：${hi - lo + 1} 个节点`, false);
+}
+
+async function selVisible(rec){
+  // 该节点自身
+  if (!rec.json.children || rec.json.children.length === 0){
+    const m = S.meshes.get(rec.json.key) || await loadMesh(rec.json.key);
+    if (m) m.group.visible = rec.visible;
+  } else {
+    // 装配节点：连带子节点
+    for (const c of S.nodes.values()){
+      if (c.json.key.startsWith(rec.json.key)){
+        if (c.json.children && c.json.children.length) continue;
+        const m = S.meshes.get(c.json.key) || await loadMesh(c.json.key);
+        if (m) m.group.visible = rec.visible;
+      }
+    }
+  }
+}
+
+function isLeaf(json){ return !json.children || json.children.length === 0; }
+
+/* ============================ 选中 & 加载 ============================ */
+async function selectNode(key){
+  S.selKey = key;
+  for (const [k, rec] of S.nodes) rec.rowEl.classList.toggle('sel', k === key);
+  applyShadeAll();
+  showNodeInfo(key);
+  if (typeof showEdgeStat === 'function') showEdgeStat(key);
+  const rec = S.nodes.get(key);
+  if (!rec) return;
+
+  if (isLeaf(rec.json)){
+    const m = S.meshes.get(key);
+    if (!m){
+      setStatus('加载网格…', true);
+      const loaded = await loadMesh(key);
+      if (loaded && loaded.group){
+        modelRoot.add(loaded.group);
+        loaded.group.visible = rec.visible;
+        rec.loaded = true;
+        if (!S._fitted){ fitView(); S._fitted = true; }
+      } else {
+        setStatus('该节点无网格', false);
+      }
+      setStatus('就绪', false);
+    }
+    showNodeInfo(key);
+  } else {
+    await loadSubtree(rec.json);
+    if (!S._fitted && S.meshes.size){ fitView(); S._fitted = true; }
+    showNodeInfo(key);
+  }
+  updateStats();
+  if (typeof updateDragHint === 'function') updateDragHint();   // 选中变了，刷新"将拖谁"
+}
+
+/* 装配节点：把子树里的叶子网格全部拉进来（并发 4，带进度） */
+async function loadSubtree(json){
+  const leaves = [];
+  (function walk(j){ if (isLeaf(j)) leaves.push(j); else j.children.forEach(walk); })(json);
+  const todo = leaves.filter(l => !S.meshes.has(l.key));
+  if (!todo.length) return;
+  let done = 0, ok = 0;
+  const total = todo.length;
+  const t0 = performance.now();
+  const worker = async () => {
+    while (todo.length){
+      const leaf = todo.shift();
+      let m = null;
+      try { m = await loadMesh(leaf.key); } catch(e){ m = null; }
+      done++;
+      if (m && m.group){ modelRoot.add(m.group); ok++; }
+      if (done % 3 === 0 || done === total){
+        const sec = (performance.now() - t0) / 1000;
+        setStatus(`加载零件 ${done}/${total}（${ok} 个有网格，${sec.toFixed(1)}s）`, true);
+      }
+    }
+  };
+  await Promise.all([worker(), worker(), worker(), worker()]);
+  setStatus(`已加载 ${ok}/${total} 个零件`, false);
+}
+
+function showNodeInfo(key){
+  const rec = S.nodes.get(key);
+  const box = document.getElementById('nodeinfo');
+  if (!rec){ box.style.display = 'none'; return; }
+  const j = rec.json;
+  const m = S.meshes.get(key);
+  const rows = [];
+  rows.push(['名称', j.name]);
+  rows.push(['类型', j.kind]);
+  rows.push(['节点键', j.key]);
+  if (m){
+    rows.push(['顶点', fmt(m.nv)]);
+    rows.push(['三角面', fmt(m.nt)]);
+    rows.push(['包围盒', m.bbox.map(v => v.toFixed(2)).join(' , ')]);
+  } else if (j.tris){
+    rows.push(['三角面(子树)', fmt(j.tris)]);
+  }
+  if (j.material){
+    const mt = j.material;
+    if (mt.diffuse) rows.push(['漫反射', mt.diffuse.slice(0,3).map(v=>v.toFixed(2)).join(', ')]);
+    if (mt.shininess !== undefined) rows.push(['光泽', String(mt.shininess)]);
+  }
+  if (j.props){
+    const keys = Object.keys(j.props);
+    const prefer = keys.filter(k => !k.startsWith('_'));
+    const show = (prefer.length ? prefer : keys).slice(0, 10);
+    for (const k of show) rows.push([k.replace(/::$/,''), String(j.props[k])]);
+  }
+  if (j.note) rows.push(['文件', j.note]);
+  box.innerHTML = '<table>' + rows.map(([a,b]) =>
+      `<tr><td>${esc(a)}</td><td class="val">${esc(String(b))}</td></tr>`).join('') + '</table>';
+  box.style.display = '';
+}
+
+/* ============================ 视图适配 ============================ */
+function clearModel(){
+  for (const rec of S.meshes.values()){
+    if (!rec) continue;
+    modelRoot.remove(rec.group);
+    rec.group.traverse(o=>{
+      if (o.geometry) o.geometry.dispose();
+    });
+  }
+  S.meshes.clear();
+  S._fitted = false;
+}
+
+function modelBox(){
+  const box = new THREE.Box3();
+  let has = false;
+  for (const rec of S.meshes.values()){
+    if (!rec) continue;
+    box.expandByObject(rec.group);
+    has = true;
+  }
+  return has ? box : null;
+}
+
+function fitView(){
+  const box = modelBox();
+  if (!box) return;
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+
+  // 先定视线方向，再把包围盒 8 个角投到相机基上，算出真正需要多远
+  const dir = new THREE.Vector3(0.9, 0.72, 1.0).normalize();
+  camera.position.copy(center).addScaledVector(dir, Math.max(size.length(), 1e-3) * 3);
+  camera.lookAt(center);
+  camera.updateMatrixWorld();
+
+  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+  const up    = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+  const back  = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 2);
+
+  let halfW = 0, halfH = 0, depth = 0;
+  const p = new THREE.Vector3();
+  for (let i = 0; i < 8; i++){
+    p.set(
+      (i & 1) ? box.max.x : box.min.x,
+      (i & 2) ? box.max.y : box.min.y,
+      (i & 4) ? box.max.z : box.min.z
+    ).sub(center);
+    halfW = Math.max(halfW, Math.abs(p.dot(right)));
+    halfH = Math.max(halfH, Math.abs(p.dot(up)));
+    depth = Math.max(depth, Math.abs(p.dot(back)));
+  }
+
+  const vFov = camera.fov * Math.PI / 180;
+  const distV = halfH / Math.tan(vFov / 2);
+  const distH = halfW / Math.tan(vFov / 2) / Math.max(camera.aspect, 0.2);
+  const dist = Math.max(distV, distH, 1e-3) * 1.06 + depth;
+
+  camera.position.copy(center).addScaledVector(dir, dist);
+  camera.near = Math.max(dist / 5000, 1e-3);
+  camera.far = dist * 100;
+  camera.updateProjectionMatrix();
+  controls.target.copy(center);
+  controls.update();
+
+  rebuildGrid(Math.max(size.x, size.y, size.z));
+  grid.position.set(center.x, box.min.y, center.z);
+  axes.scale.setScalar(Math.max(size.length()*0.12, 1e-3));
+
+  // 统计：三角面/零件用树的真实值（同一零件多实例只算一次），只有包围盒随视口更新
+  updateStats();
+  document.getElementById('stBox').textContent =
+    `${size.x.toFixed(1)}×${size.y.toFixed(1)}×${size.z.toFixed(1)}`;
+}
+
+function updateStats(){
+  let t = countTree(S.root, 'tris');
+  // 文件夹模式建树时 tris 未知 → 用已加载网格的真实三角形数
+  if (!t){
+    t = 0;
+    for (const rec of S.meshes.values()) if (rec) t += rec.nt;
+  }
+  const p = countTree(S.root, 'part');
+  document.getElementById('stTri').textContent = fmt(t);
+  if (p) document.getElementById('stPart').textContent = fmt(p);
+}
+function countTree(j, what){
+  if (!j) return 0;
+  const kids = j.children || [];
+  if (what === 'part'){
+    return (j.kind === 'part' || j.kind === 'instance') ? 1 : kids.reduce((a,c)=>a+countTree(c,'part'),0);
+  }
+  // tris：只累加叶子，否则装配节点的汇总值会被重复计入
+  if (kids.length) return kids.reduce((a,c)=>a+countTree(c,'tris'),0);
+  return j.tris || 0;
+}
+
+/* ============================ 打开文档 ============================ */
+async function openPath(path){
+  setStatus('解析中…', true);
+  try{
+    const res = await fetch('/api/open', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ path })
+    });
+    if (!res.ok){
+      const e = await res.json().catch(()=>({detail:res.statusText}));
+      throw new Error(e.detail || res.statusText);
+    }
+    const data = await res.json();
+    S.docId = data.id;
+    S.root = data.tree;
+    S._fitted = false;
+    S.docName = data.name || data.path || 'JT Model';
+    buildTree(data.tree);
+
+    const badge = document.getElementById('docBadge');
+    badge.style.display = '';
+    badge.textContent = data.mode === 'native' ? 'native' : data.mode;
+    badge.className = 'badge ' + (data.mode === 'native' ? 'ok' : 'warn');
+    badge.title = data.note ? ('装配 .jt 读取失败，已改用零件文件夹：' + data.note) : data.path;
+
+    document.getElementById('tree').scrollTop = 0;
+    setStatus(`已打开 ${data.name}（${data.mode}${data.units ? ' · ' + data.units : ''}）`, false);
+
+    // 自动选中根并载入首个叶子
+    if (data.tree){
+      await selectNode(data.tree.key);
+    }
+    if (qs.get('debug')){
+      const st = window.__jtState();
+      const gl = renderer.getContext();
+      const dbg = renderer.info.render;
+      setStatus(`DBG loaded=${st.loaded} scene=${st.inScene} tris=${dbg.triangles} calls=${dbg.calls} lost=${st.ctxLost} cam=${st.cam} tgt=${st.target} near=${st.near}`, false);
+    }
+    if (qs.get('shot')){
+      renderer.render(scene, camera);
+      const ta = document.createElement('textarea');
+      ta.id = 'shotdata';
+      ta.textContent = renderer.domElement.toDataURL('image/png');
+      ta.style.display = 'none';
+      document.body.appendChild(ta);
+    }
+  } catch (err){
+    setStatus('打开失败：' + err.message, false, true);
+    console.error(err);
+  }
+}
+
+function setStatus(msg, busy=false, isErr=false){
+  const el = document.getElementById('status');
+  el.innerHTML = (busy ? '<span class="spin"></span>' : '') + esc(msg);
+  el.style.color = isErr ? 'var(--err)' : '';
+}
+
+/* ============================ 交互绑定 ============================ */
+document.getElementById('shadeSeg').addEventListener('click', (e)=>{
+  const b = e.target.closest('button[data-shade]');
+  if (!b) return;
+  S.shade = b.dataset.shade;
+  [...e.currentTarget.querySelectorAll('button')].forEach(x=>x.classList.toggle('on', x === b));
+  applyShadeAll();
+});
+
+document.getElementById('btnEdges').addEventListener('click', async (e)=>{
+  S.edges = !S.edges;
+  e.currentTarget.classList.toggle('on', S.edges);
+  // 重建线框边
+  for (const [k, rec] of [...S.meshes]){
+    if (!rec) continue;
+    if (S.edges && !rec.edge){
+      const eg = new THREE.EdgesGeometry(rec.body.geometry, 20);
+      rec.edge = new THREE.LineSegments(eg, MAT.edge.clone());
+      rec.edge.userData.isEdge = true;
+      rec.group.add(rec.edge);
+    } else if (!S.edges && rec.edge){
+      rec.group.remove(rec.edge);
+      rec.edge.geometry.dispose();
+      rec.edge = null;
+    }
+    applyShadeTo(rec, isHighlighted(k));
+  }
+});
+
+document.getElementById('btnFit').addEventListener('click', fitView);
+document.getElementById('colorSeg').addEventListener('click', (e)=>{
+  const b = e.target.closest('button[data-color]');
+  if (!b) return;
+  S.colorMode = b.dataset.color;
+  [...e.currentTarget.querySelectorAll('button')].forEach(x=>x.classList.toggle('on', x === b));
+  applyColorMode();
+});
+document.getElementById('btnAxes').addEventListener('click', (e)=>{
+  axes.visible = !axes.visible;
+  e.currentTarget.classList.toggle('on', axes.visible);
+});
+document.getElementById('btnGrid').addEventListener('click', (e)=>{
+  if (grid) grid.visible = !grid.visible;
+  e.currentTarget.classList.toggle('on', grid ? grid.visible : false);
+});
+document.getElementById('dens').addEventListener('input', (e)=>{
+  // 仅调整线框透明度，模拟"线框密度"
+  const v = parseFloat(e.target.value);
+  MAT.wire.opacity = 0.35 + v * 0.4;
+  applyShadeAll();
+});
+document.getElementById('bgs').addEventListener('click', (e)=>{
+  const sw = e.target.closest('.sw');
+  if (!sw) return;
+  [...e.currentTarget.children].forEach(x=>x.classList.toggle('on', x === sw));
+  S.bg = sw.dataset.bg;
+  scene.background = new THREE.Color(S.bg);
+});
+
+document.getElementById('btnExpand').addEventListener('click', ()=>{
+  document.querySelectorAll('#tree .kids').forEach(k=>k.classList.remove('hide'));
+  document.querySelectorAll('#tree .tw').forEach(t=>{ if (t.textContent) t.textContent='▼'; });
+});
+document.getElementById('btnCollapse').addEventListener('click', ()=>{
+  document.querySelectorAll('#tree .kids').forEach(k=>k.classList.add('hide'));
+  document.querySelectorAll('#tree .tw').forEach(t=>{ if (t.textContent) t.textContent='▶'; });
+});
+
+document.getElementById('filter').addEventListener('input', (e)=>{
+  const q = e.target.value.trim().toLowerCase();
+  for (const rec of S.nodes.values()){
+    const hit = !q || rec.json.name.toLowerCase().includes(q);
+    rec.rowEl.style.display = hit ? '' : 'none';
+    if (hit && q) rec.kidsEl.classList.remove('hide');
+  }
+});
+
+window.addEventListener('keydown', (e)=>{
+  if (e.key === 'f' || e.key === 'F') fitView();
+});
+
+/* ============================ 拖放上传 ============================ */
+const dropEl = document.getElementById('drop');
+let dragDepth = 0;
+viewEl.addEventListener('dragenter', (e)=>{ e.preventDefault(); dragDepth++; dropEl.classList.add('show'); });
+viewEl.addEventListener('dragover', (e)=> e.preventDefault());
+viewEl.addEventListener('dragleave', ()=>{ if(--dragDepth <= 0) dropEl.classList.remove('show'); });
+viewEl.addEventListener('drop', async (e)=>{
+  e.preventDefault(); dropEl.classList.remove('show'); dragDepth = 0;
+  const f = e.dataTransfer.files[0];
+  if (!f) return;
+  if (!f.name.toLowerCase().endsWith('.jt')){
+    setStatus('只支持 .jt 文件', false, true); return;
+  }
+  setStatus('上传 ' + f.name + ' …', true);
+  const fd = new FormData(); fd.append('file', f);
+  try{
+    const res = await fetch('/api/upload', { method:'POST', body: fd });
+    if (!res.ok){ const er = await res.json().catch(()=>({})); throw new Error(er.detail || res.statusText); }
+    const data = await res.json();
+    S.docId = data.id; S.root = data.tree; S._fitted = false;
+    S.docName = data.name || data.path || (data.tree && data.tree.name) || 'JT Model';
+    SP.match = null; SP.sheetData = null;   // 换了模型，Excel 匹配要重算
+    // 换模型：分组 / IPC / 连线 / 撤销栈全部重来
+    S.groups = []; S.multiSel.clear(); S.selGroupId = null;
+    S.ipcs = []; S.selIpcId = null; S.undoStack = [];
+    S.links = []; S.linkPending = null; S.linkMode = false;
+    if (typeof renderGroups === 'function') renderGroups();
+    if (typeof renderIpcs === 'function') renderIpcs();
+    if (typeof updateLinkLines === 'function') updateLinkLines();
+    buildTree(data.tree);
+    if (data.tree) selectNode(data.tree.key);
+    setStatus('已打开 ' + data.name, false);
+  } catch (err){
+    setStatus('上传失败：' + err.message, false, true);
+  }
+});
+
+/* ============================ 样本列表 ============================ */
+async function loadSamples(){
+  const sel = document.getElementById('samples');
+  sel.innerHTML = '<option>加载样本…</option>';
+  try{
+    const res = await fetch('/api/samples');
+    const data = await res.json();
+    sel.innerHTML = '';
+    const ph = document.createElement('option');
+    ph.textContent = `— 选择 JT（${data.items.length}）—`;
+    ph.value = '';
+    sel.appendChild(ph);
+    for (const it of data.items){
+      const o = document.createElement('option');
+      o.value = it.path;
+      o.textContent = it.kind === 'folder'
+        ? `📁 ${it.name}  (${it.parts} 个零件)`
+        : `📄 ${it.name}  (${(it.size/1024).toFixed(0)} KB)`;
+      sel.appendChild(o);
+    }
+  } catch (err){
+    sel.innerHTML = '<option>样本列表读取失败</option>';
+  }
+}
+document.getElementById('samples').addEventListener('change', (e)=>{
+  if (e.target.value) openPath(e.target.value);
+});
+document.getElementById('btnRefresh').addEventListener('click', loadSamples);
+document.getElementById('pathInput').addEventListener('keydown', (e)=>{
+  if (e.key === 'Enter' && e.target.value.trim()) openPath(e.target.value.trim());
+});
+
+/* ============================ 工具 ============================ */
+function fmt(n){
+  if (n === undefined || n === null) return '0';
+  return Number(n).toLocaleString('en-US');
+}
+function esc(s){
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// 调试用：把运行时状态挂到 document.title，便于 --dump-dom 检查
+window.__jt = { THREE, renderer, scene, camera, controls, modelRoot, S };
+window.__jtFit = () => fitView();
+window.__selectNode = (k) => selectNode(k);
+window.__jtFrame = () => ({ on: FR.on, px: FR.px, a4: FR.a4 });
+window.__jtReset = () => resetPositions();
+window.__jtState = () => ({
+  loaded: S.meshes.size,
+  inScene: modelRoot.children.length,
+  cam: camera.position.toArray().map(v => +v.toFixed(2)),
+  target: controls.target.toArray().map(v => +v.toFixed(2)),
+  near: camera.near, far: camera.far,
+  ctxLost: renderer.getContext().isContextLost(),
+});
+
+/* ============================ 主动分组（左侧） ============================ */
+/*
+ * 语义：一个"自定义分组"= 出图上的一个热点。
+ * 用户自己决定哪些节点算一组（可以跨装配），比按顶层节点自动分组灵活。
+ * 分组存成 nodeKey 数组；出图时展开成叶子零件。
+ */
+
+const GROUP_COLORS = ['#ffc63a', '#7bd88f', '#4ea1ff', '#e8705f', '#c58bff',
+                      '#5fe0d0', '#ff9f43', '#b0bec5'];
+
+function toggleMultiSelect(key) {
+  if (S.multiSel.has(key)) S.multiSel.delete(key);
+  else S.multiSel.add(key);
+  refreshMultiSelClasses();
+  updateGroupUI();
+}
+
+function refreshMultiSelClasses() {
+  for (const [k, rec] of S.nodes) {
+    if (rec.rowEl) rec.rowEl.classList.toggle('multi', S.multiSel.has(k));
+  }
+}
+
+/** 某节点下的所有叶子 key */
+function leafKeysUnder(nodeKey) {
+  const out = [];
+  const node = S.nodeByKey && S.nodeByKey.get(nodeKey);
+  if (!node) {
+    if (S.meshes.has(nodeKey)) out.push(nodeKey);
+    return out;
+  }
+  (function walk(n) {
+    if (!n.children || !n.children.length) { out.push(n.key); return; }
+    n.children.forEach(walk);
+  })(node);
+  return out;
+}
+
+/** 当前用于出图的分组；没开自定义就退回按顶层节点自动分组 */
+function groupsForDrawing() {
+  if (document.getElementById('gUse') && document.getElementById('gUse').checked && S.groups.length) {
+    return S.groups.map((g, i) => {
+      const leaf = new Set();
+      for (const k of g.keys) for (const l of leafKeysUnder(k)) leaf.add(l);
+      return {
+        key: `__grp_${g.id}`,
+        name: g.name,
+        kind: 'custom',
+        tris: 0,
+        leafKeys: [...leaf],
+        color: GROUP_COLORS[i % GROUP_COLORS.length],
+        // 自定义编号：出图时直接用作热点编号（留空则自动）
+        label: (g.label || '').trim(),
+      };
+    }).filter((g) => g.leafKeys.length);
+  }
+  return collectGroups(S.root);
+}
+
+function renderGroups() {
+  const box = document.getElementById('groupList');
+  const badge = document.getElementById('gCount');
+  if (!S.groups.length) {
+    box.innerHTML = '<div class="empty">还没有分组。Ctrl/⌘ 点树里多个节点 → 点「+ 建组」</div>';
+    badge.style.display = 'none';
+    updateGroupUI();
+    return;
+  }
+  badge.style.display = '';
+  badge.textContent = `${S.groups.length} 组`;
+  box.innerHTML = '';
+  S.groups.forEach((g, i) => {
+    const el = document.createElement('div');
+    el.className = 'gitem' + (S.selGroupId === g.id ? ' sel' : '');
+
+    // 点整行 = 选中这个分组（3D 里高亮该组全部零件，树里同步多选）
+    el.addEventListener('click', (ev) => {
+      if (ev.target.closest('button') || ev.target.classList.contains('gname') && ev.target.isContentEditable) return;
+      selectGroup(g);
+    });
+
+    const sw = document.createElement('span');
+    sw.className = 'sw2';
+    sw.style.background = GROUP_COLORS[i % GROUP_COLORS.length];
+
+    // 编号（可自定义；出图时作为热点编号，留空则自动）
+    const lab = document.createElement('input');
+    lab.className = 'glabel';
+    lab.value = g.label || '';
+    lab.placeholder = '自动';
+    lab.title = '热点编号（留空=自动编号）';
+    lab.addEventListener('click', (ev) => ev.stopPropagation());
+    lab.addEventListener('input', () => {
+      g.label = lab.value.trim();
+      SP.match = null; SP.sheetData = null;
+    });
+
+    const nm = document.createElement('span');
+    nm.className = 'gname';
+    nm.textContent = g.name;
+    nm.title = '双击改名';
+    nm.addEventListener('click', (ev) => ev.stopPropagation());
+    nm.addEventListener('dblclick', (ev) => {
+      ev.stopPropagation();
+      nm.contentEditable = 'true';
+      nm.focus();
+      document.getSelection().selectAllChildren(nm);
+    });
+    nm.addEventListener('blur', () => {
+      nm.contentEditable = 'false';
+      const v = nm.textContent.trim();
+      if (v) g.name = v;
+      else nm.textContent = g.name;
+      SP.match = null; SP.sheetData = null;
+    });
+    nm.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); nm.blur(); } });
+
+    const cnt = document.createElement('span');
+    cnt.className = 'gn';
+    let leaves = 0;
+    for (const k of g.keys) leaves += leafKeysUnder(k).length;
+    cnt.textContent = `${leaves} 件`;
+
+    const del = document.createElement('button');
+    del.textContent = '删';
+    del.title = '删除这个分组';
+    del.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      S.groups.splice(i, 1);
+      if (S.selGroupId === g.id) S.selGroupId = null;
+      renderGroups();
+      SP.match = null; SP.sheetData = null;
+    });
+
+    el.append(sw, lab, nm, cnt, del);
+    box.appendChild(el);
+  });
+  updateGroupUI();
+}
+
+/** 点分组 = 选中该组的全部叶子零件 */
+function selectGroup(g) {
+  const leaf = new Set();
+  for (const k of g.keys) for (const l of leafKeysUnder(k)) leaf.add(l);
+  S.selGroupId = g.id;
+  S.multiSel = leaf;
+  S.lastClickedKey = [...leaf][0] || null;
+  refreshMultiSelClasses();
+  applyShadeAll();
+  // 树里展开并滚到第一个成员
+  const first = [...leaf][0];
+  if (first && S.nodes.get(first)) {
+    try { S.nodes.get(first).rowEl.scrollIntoView({ block: 'nearest' }); } catch (e) { /* 忽略 */ }
+  }
+  renderGroups();
+  setStatus(`已选中分组「${g.name}」：${leaf.size} 个零件`, false);
+}
+
+function updateGroupUI() {
+  const use = document.getElementById('gUse');
+  if (use) use.disabled = !S.groups.length;
+  const hint = S.multiSel.size
+    ? `已多选 ${S.multiSel.size} 个节点，点「+ 建组」`
+    : null;
+  if (hint) setStatus(hint, false);
+}
+
+/* ---- 建组 ---- */
+document.getElementById('btnNewGroup').addEventListener('click', () => {
+  const keys = S.multiSel.size
+    ? [...S.multiSel]
+    : (S.selKey ? [S.selKey] : []);
+  if (!keys.length) { setStatus('先在左侧选中节点（可 Ctrl 多选），再点「+ 建组」', false, true); return; }
+  const n = S.groups.length + 1;
+  S.groups.push({
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+    name: `分组 ${n}`,
+    keys,
+  });
+  S.multiSel.clear();
+  refreshMultiSelClasses();
+  renderGroups();
+  document.getElementById('gUse').checked = true;
+  SP.match = null; SP.sheetData = null;
+  setStatus(`已建分组「分组 ${n}」，共 ${keys.length} 个节点`, false);
+});
+
+document.getElementById('btnClearGroups').addEventListener('click', () => {
+  if (!S.groups.length) return;
+  S.groups = [];
+  renderGroups();
+  SP.match = null; SP.sheetData = null;
+  setStatus('已清空自定义分组', false);
+});
+
+document.getElementById('gUse').addEventListener('change', (e) => {
+  SP.match = null; SP.sheetData = null;
+  setStatus(e.target.checked
+    ? `出图将使用 ${S.groups.length} 个自定义分组`
+    : '出图将按顶层节点自动分组', false);
+});
+
+/* ---- Excel 模板下载 ---- */
+document.getElementById('btnTpl').addEventListener('click', () => {
+  const rows = [['序号', '零件名称', '检验项目', '数量', '备注']];
+  // 有自定义分组就先把组名填进去，用户只要补检验项
+  if (S.groups.length) {
+    S.groups.forEach((g, i) => {
+      rows.push([String(i + 1), g.name, '', '1', '']);
+    });
+  } else {
+    const gs = S.root ? collectGroups(S.root) : [];
+    if (gs.length) {
+      gs.forEach((g, i) => rows.push([String(i + 1), g.name, '', '1', '']));
+    } else {
+      rows.push(['1', '（零件名，与左侧树一致）', '（如：配合尺寸 φ10H7）', '1', '']);
+    }
+  }
+  const blob = makeTemplateXlsx(rows);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'JT热点分组模板.xlsx';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  setStatus(`Excel 模板已下载（${rows.length - 1} 行预填分组名）`, false);
+});
+
+/** 生成最小可用的 XLSX（ZIP + 4 个 XML），不依赖任何库 */
+function makeTemplateXlsx(rows) {
+  const enc = new TextEncoder();
+  const files = [];
+  const strs = [];
+  const idx = new Map();
+  const sid = (s) => {
+    if (!idx.has(s)) { idx.set(s, strs.length); strs.push(s); }
+    return idx.get(s);
+  };
+  const col = (i) => {
+    let s = ''; let n = i;
+    do { s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26) - 1; } while (n >= 0);
+    return s;
+  };
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  const sheetRows = rows.map((row, r) => {
+    const cells = row.map((v, c) => {
+      if (v === '' || v == null) return '';
+      const ref = `${col(c)}${r + 1}`;
+      if (typeof v === 'number') return `<c r="${ref}"><v>${v}</v></c>`;
+      return `<c r="${ref}" t="s"><v>${sid(String(v))}</v></c>`;
+    }).join('');
+    return `<row r="${r + 1}">${cells}</row>`;
+  }).join('');
+
+  const xml = {
+    '[Content_Types].xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
+</Types>`,
+    '_rels/.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`,
+    'xl/workbook.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+ xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheets><sheet name="热点分组" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`,
+    'xl/_rels/workbook.xml.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>
+</Relationships>`,
+    'xl/sharedStrings.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${strs.length}" uniqueCount="${strs.length}">
+${strs.map((s) => `<si><t>${esc(s)}</t></si>`).join('')}
+</sst>`,
+    'xl/worksheets/sheet1.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<sheetData>${sheetRows}</sheetData></worksheet>`,
+  };
+
+  // 组装 ZIP（store，不压缩；CRC32 自己算）
+  const crcTable = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+      t[n] = c >>> 0;
+    }
+    return t;
+  })();
+  const crc32 = (buf) => {
+    let c = 0xFFFFFFFF;
+    for (let i = 0; i < buf.length; i++) c = crcTable[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  };
+
+  const entries = Object.entries(xml).map(([name, text]) => {
+    const data = enc.encode(text);
+    return { name: enc.encode(name), data, crc: crc32(data) };
+  });
+
+  let size = 0;
+  for (const e of entries) size += 30 + e.name.length + e.data.length + 46 + e.name.length + 22;
+  const out = new Uint8Array(size);
+  const dv = new DataView(out.buffer);
+  let o = 0;
+  const central = [];
+  for (const e of entries) {
+    const off = o;
+    dv.setUint32(o, 0x04034b50, true); o += 4;
+    dv.setUint16(o, 20, true); o += 2;
+    dv.setUint16(o, 0, true); o += 2;
+    dv.setUint16(o, 0, true); o += 2;          // store
+    dv.setUint16(o, 0, true); o += 2;
+    dv.setUint16(o, 0, true); o += 2;
+    dv.setUint32(o, e.crc, true); o += 4;
+    dv.setUint32(o, e.data.length, true); o += 4;
+    dv.setUint32(o, e.data.length, true); o += 4;
+    dv.setUint16(o, e.name.length, true); o += 2;
+    dv.setUint16(o, 0, true); o += 2;
+    out.set(e.name, o); o += e.name.length;
+    out.set(e.data, o); o += e.data.length;
+    central.push({ ...e, off });
+  }
+  const cdStart = o;
+  for (const e of central) {
+    dv.setUint32(o, 0x02014b50, true); o += 4;
+    dv.setUint16(o, 20, true); o += 2;
+    dv.setUint16(o, 20, true); o += 2;
+    dv.setUint16(o, 0, true); o += 2;
+    dv.setUint16(o, 0, true); o += 2;
+    dv.setUint16(o, 0, true); o += 2;
+    dv.setUint16(o, 0, true); o += 2;
+    dv.setUint32(o, e.crc, true); o += 4;
+    dv.setUint32(o, e.data.length, true); o += 4;
+    dv.setUint32(o, e.data.length, true); o += 4;
+    dv.setUint16(o, e.name.length, true); o += 2;
+    dv.setUint16(o, 0, true); o += 2;
+    dv.setUint16(o, 0, true); o += 2;
+    dv.setUint16(o, 0, true); o += 2;
+    dv.setUint16(o, 0, true); o += 2;
+    dv.setUint32(o, 0, true); o += 4;
+    dv.setUint32(o, e.off, true); o += 4;
+    out.set(e.name, o); o += e.name.length;
+  }
+  const cdSize = o - cdStart;
+  dv.setUint32(o, 0x06054b50, true); o += 4;
+  dv.setUint16(o, 0, true); o += 2;
+  dv.setUint16(o, 0, true); o += 2;
+  dv.setUint16(o, central.length, true); o += 2;
+  dv.setUint16(o, central.length, true); o += 2;
+  dv.setUint32(o, cdSize, true); o += 4;
+  dv.setUint32(o, cdStart, true); o += 4;
+  dv.setUint16(o, 0, true); o += 2;
+
+  return new Blob([out.subarray(0, o)], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+}
+
+/* ============================ 出图：分组 + Excel → A4 线图 ============================ */
+const SP = {
+  panel: null,
+  workbook: null,        // readWorkbook 结果
+  workbookName: '',
+  rows: null,            // 当前工作表的二维数组
+  headerIndex: 0,
+  columns: null,         // detectColumns 结果（可手动覆盖）
+  match: null,           // matchSheet 结果
+  sheetData: null,       // buildSheet 结果（预览/导出共用）
+  mode: 'grid',
+  view: 'iso',           // 默认等轴测（用户反馈"当前视角"是错的）
+  busy: false,
+  aiPositions: null,     // AI 布点结果 { [hotspotId]: {x,y} }
+  plate: true,           // 图册版面（对齐 HTEAM-04021）
+  drawingNo: '',         // 图册号，例如 HTEAM-04021
+};
+
+function spEl(id) { return document.getElementById(id); }
+
+function spLog(html) {
+  spEl('spReport').innerHTML = html;
+}
+
+function spToggle(show) {
+  const p = spEl('sheetPanel');
+  p.style.display = show ? 'flex' : 'none';
+}
+
+/** 当前 3D 视角 → 正交投影基 */
+function currentBasis() {
+  const eye = camera.position.clone();
+  const target = controls.target.clone();
+  const dir = target.clone().sub(eye);
+  if (dir.lengthSq() < 1e-12) dir.set(0, 0, -1);
+  dir.normalize();
+  /*
+   * right = dir × (0,1,0) 恒等于 lookAt 的相机右矢 up × 后向
+   * （展开：dir×(0,1,0) = (−dir.z, 0, dir.x) = (0,1,0)×(−dir)），
+   * 包括近极点 —— 所以不要在这里换 upHint 轴：之前近极点给 (0,0,1)
+   * 反而让滚转脱离相机方位角（从 +Z 一侧看甚至镜像）。
+   * 只有恰在极点（叉积零向量，OrbitControls 实际到不了）才兜底。
+   */
+  let right = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0));
+  if (right.lengthSq() < 1e-12) right.set(1, 0, 0);
+  right.normalize();
+  const up = new THREE.Vector3().crossVectors(right, dir).normalize();
+  return { dir, right, up };
+}
+
+function basisFor(view) {
+  const CAM = { iso: [0.9, 0.72, 1.0], front: [0, 0, 1], top: [0, 1, 0.0001], right: [1, 0, 0.0001] };
+  if (view === 'current') return currentBasis();
+  const dir = new THREE.Vector3(...(CAM[view] || CAM.iso)).normalize();
+  /*
+   * upHint 沿用 lookAt 的滚转语义（相机 up 恒为世界 +Y）：
+   * 极点附近的滚转由"视线水平分量的反方向"决定 —— 顶视（从 +Y 往下看）
+   * 屏幕上 = −Z、屏幕右 = +X；仰视反过来。所以 upHint 取 −(dir 的水平分量)
+   * 而不是固定的 (0,0,1)（那会让俯视图相对视口转 180°）。
+   */
+  let upHint = new THREE.Vector3(0, 1, 0);
+  if (Math.abs(dir.y) > 0.999) {
+    upHint = new THREE.Vector3(-dir.x, 0, -dir.z).normalize();
+    if (upHint.lengthSq() < 1e-12) upHint.set(0, 0, -1);   // CAM.top 的 z 分量兜底
+  }
+  /*
+   * 固定视角的 dir 语义与 fitView 一致：**后向**（相机位置方向，eye−target）。
+   * three.js lookAt 的约定是 right = upHint × 后向、up = 后向 × right（见
+   * vendor/three.module.js Matrix4.lookAt：_x.crossVectors(up,_z)、_y.crossVectors(_z,_x)）。
+   * 所以这里必须 upHint × dir —— 曾经写成 dir × upHint，结果固定视角
+   * （等轴测/前视/俯视/右视）出的图整张左右镜像（用户报"视角反着的"）。
+   *
+   * 注意 currentBasis() 里 dir 是**前向**（target−eye），公式恰好相反（dir × upHint），
+   * 两者都是对的，不要"统一"成同一个顺序。
+   * 深度约定不受影响：projectGroup 里 dep = −(dir·w)，对前向/后向 dir 都满足
+   * "越小越靠近相机"。
+   */
+  const right = new THREE.Vector3().crossVectors(upHint, dir).normalize();
+  const up = new THREE.Vector3().crossVectors(dir, right).normalize();
+  return { dir, right, up };
+}
+
+/* ---- 文件选择 ---- */
+spEl('spFile').addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  try {
+    spLog('正在读取 ' + file.name + ' …');
+    const ab = await file.arrayBuffer();
+    const wb = await readWorkbook(ab, file.name);
+    SP.workbook = wb;
+    SP.workbookName = file.name;
+    SP.rows = wb.sheets[wb.active || 0].rows;
+    SP.headerIndex = 0;
+    SP.columns = detectColumns(SP.rows[0] || []);
+    SP.match = null;
+    SP.sheetData = null;
+    spEl('spFileInfo').textContent =
+      `${file.name} · 工作表「${wb.sheets[0].name}」 · ${SP.rows.length} 行 × ${(SP.rows[0] || []).length} 列`;
+    spRenderColumns();
+    spRunMatch();
+  } catch (err) {
+    spLog('<span class="bad">读取失败: ' + (err && err.message ? err.message : err) + '</span>');
+  }
+});
+
+/* ---- 列映射下拉 ---- */
+function spRenderColumns() {
+  const box = spEl('spCols');
+  const header = SP.rows ? (SP.rows[SP.headerIndex] || []) : [];
+  if (!header.length) { box.textContent = '未读取分组表'; return; }
+  const FIELDS = [
+    ['name', '分组名'],
+    ['label', '编号'],
+    ['title', '说明'],
+    ['qty', '数量'],
+  ];
+  box.innerHTML = '';
+  for (const [key, label] of FIELDS) {
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.alignItems = 'center';
+    row.style.gap = '6px';
+    const lab = document.createElement('span');
+    lab.textContent = label;
+    lab.style.minWidth = '42px';
+    lab.style.color = '#7d8b9c';
+    const sel = document.createElement('select');
+    sel.dataset.field = key;
+    const optNone = document.createElement('option');
+    optNone.value = '-1';
+    optNone.textContent = '（无）';
+    sel.appendChild(optNone);
+    header.forEach((h, i) => {
+      const o = document.createElement('option');
+      o.value = String(i);
+      o.textContent = `${colLetter(i)} · ${String(h || '(空)')}`;
+      sel.appendChild(o);
+    });
+    sel.value = String(SP.columns && SP.columns[key] >= 0 ? SP.columns[key] : -1);
+    sel.addEventListener('change', () => {
+      SP.columns[key] = Number(sel.value);
+      spRunMatch();
+    });
+    row.appendChild(lab);
+    row.appendChild(sel);
+    box.appendChild(row);
+  }
+}
+
+function colLetter(i) {
+  let s = '';
+  let n = i;
+  do { s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26) - 1; } while (n >= 0);
+  return s;
+}
+
+/* ---- 匹配 ---- */
+function spRunMatch() {
+  if (!SP.rows || !SP.columns) return;
+  if (!S.root) { spLog('<span class="warn">还没有打开 JT 模型</span>'); return; }
+  const groups = groupsForDrawing();
+  SP.groups = groups;
+  SP.match = matchSheet(groups, SP.rows, { columns: SP.columns, headerRow: SP.headerIndex });
+  SP.sheetData = null;
+  const m = SP.match;
+  const parts = [];
+  const usingCustom = document.getElementById('gUse').checked && S.groups.length;
+  parts.push(`<span class="ok">✓</span> 分组 ${groups.length} 个${usingCustom ? '（自定义）' : ''}，Excel 数据 ${Math.max(SP.rows.length - 1, 0)} 行`);
+  parts.push(`热点 ${m.hotspots.length} 条，覆盖分组 ${m.matched.size} 个`);
+  const byType = {};
+  for (const h of m.hotspots) byType[h.matchType] = (byType[h.matchType] || 0) + 1;
+  parts.push('匹配方式: ' + Object.entries(byType).map(([k, v]) => `${k}=${v}`).join('  '));
+  if (m.unmatchedRows.length) {
+    parts.push(`<span class="bad">✗ 未匹配 ${m.unmatchedRows.length} 行</span>`);
+    for (const r of m.unmatchedRows.slice(0, 6)) {
+      parts.push(`   行${r.rowIndex + 1} 「${r.name || ''}」 ${r.reason}`);
+    }
+    if (m.unmatchedRows.length > 6) parts.push(`   …还有 ${m.unmatchedRows.length - 6} 行`);
+  }
+  const fuzz = m.hotspots.filter((h) => h.matchType === 'fuzzy' || h.matchType === 'contains');
+  if (fuzz.length) {
+    parts.push(`<span class="warn">⚠ 模糊匹配 ${fuzz.length} 条</span>`);
+    for (const h of fuzz.slice(0, 6)) {
+      parts.push(`   行${h.rowIndex + 1} 「${h.excelName}」→「${h.groupName}」 ${(h.matchScore * 100).toFixed(0)}%`);
+    }
+  }
+  if (m.unmatchedGroups.length) {
+    parts.push(`<span class="warn">未匹配到 Excel 的分组 ${m.unmatchedGroups.length} 个</span>（默认不编号）`);
+  }
+  spLog(parts.join('\n'));
+}
+
+/* ---- 生成 ---- */
+async function spBuild() {
+  if (!S.root) { spLog('<span class="bad">先打开一个 JT 模型</span>'); return null; }
+  if (!S.meshes.size) { spLog('<span class="bad">模型还没加载完，等状态栏显示"已加载"再试</span>'); return null; }
+
+  if (!SP.match) spRunMatch();
+  if (!SP.match) {
+    /*
+     * 没有 Excel 也应该能出图：
+     *   · 自定义分组填了编号 → 用自定义编号
+     *   · 没填 → 自动编号（buildSheet 里 labelUnmatched / 默认每组一个）
+     */
+    SP.match = {
+      hotspots: [], matched: new Map(), unmatchedRows: [], unmatchedGroups: [],
+      columns: {}, header: [],
+    };
+    spLog('<span class="warn">未导入分组表，按自定义编号 / 自动编号出图</span>');
+  }
+
+  spEl('spPreview').disabled = true;
+  spLog('正在投影 / 消隐 …');
+  await new Promise((r) => setTimeout(r, 30));   // 让 UI 先刷新
+
+  const t0 = performance.now();
+  const groups = groupsForDrawing();
+  const hlr = spEl('spHlr').checked;
+  const plate = spEl('spPlate').checked;
+  const drawingNo = spEl('spDrawingNo').value.trim();
+  SP.plate = plate;
+  SP.drawingNo = drawingNo;
+  const edgesByGroup = new Map();
+  let segs = 0;
+
+  // Excel 匹配 → groupKey → 热点记录数组
+  const hotspotByGroup = new Map();
+  for (const h of SP.match.hotspots) {
+    const keys = h.groupKeys && h.groupKeys.length ? h.groupKeys : [h.groupKey];
+    for (const k of keys) {
+      if (!hotspotByGroup.has(k)) hotspotByGroup.set(k, []);
+      hotspotByGroup.get(k).push(h);
+    }
+  }
+
+  // 自定义分组自带的编号 / 名称优先：用户手填的编号覆盖 Excel 的
+  for (const g of groups) {
+    if (!g.label) continue;
+    const list = hotspotByGroup.get(g.key);
+    if (list && list.length) {
+      list[0].label = g.label;                    // 覆盖第一条
+      for (let i = 1; i < list.length; i++) hotspotByGroup.get(g.key)[i].label = `${g.label}-${i + 1}`;
+    } else {
+      hotspotByGroup.set(g.key, [{ label: g.label, title: g.name, qty: '', extra: [], groupName: g.name }]);
+    }
+  }
+
+  let sheetData;
+  if (FR.on && FR.px) {
+    /* ---------- 取景框模式：所见即所得 ---------- */
+    layoutFrame();                        // 确保 px 是最新的
+    camera.userData.viewportW = viewEl2.clientWidth;
+    camera.userData.viewportH = viewEl2.clientHeight;
+    camera.updateMatrixWorld(true);
+
+    const mapper = screenFrameMapper(FR.px, FR.a4);
+    const rect = { x0: FR.a4.x0, y0: FR.a4.y0, x1: FR.a4.x1, y1: FR.a4.y1 };
+
+    // 3D 连线的端点 → 屏幕 → A4 毫米（和边线用同一套映射）
+    const linkSegments = collectLinkWorldSegments();
+    const projectPointFrame = (x, y, z) => {
+      const v = new THREE.Vector3(x, y, z).project(camera);
+      if (v.z > 1) return null;
+      const px = (v.x * 0.5 + 0.5) * viewEl2.clientWidth;
+      const py = (1 - (v.y * 0.5 + 0.5)) * viewEl2.clientHeight;
+      return mapper.toA4(px, py);
+    };
+
+    /*
+     * 关键：整机的所有分组一起投影、共用一个深度缓冲。
+     * 逐分组消隐时外壳遮不住内部零件，整机会变成密网。
+     */
+    const all = projectManyScreen(S.meshes, groups, camera, mapper, 25);
+    let groupedRaw = null;
+    let grouped;
+    if (hlr) {
+      groupedRaw = removeHiddenLinesGrouped(all, { res: 1800 });
+      grouped = removeHiddenLinesGroupedVisible(groupedRaw);
+    } else {
+      grouped = new Map();
+      const own = all.edges.owner;
+      const keys = all.keys;
+      for (let i = 0; i < own.length; i++) {
+        const k = keys[own[i]];
+        if (!k) continue;
+        if (!grouped.has(k)) grouped.set(k, []);
+        const b = grouped.get(k);
+        b.push(all.edges.uv[i * 4], all.edges.uv[i * 4 + 1], all.edges.uv[i * 4 + 2], all.edges.uv[i * 4 + 3]);
+      }
+      for (const [k, b] of grouped) grouped.set(k, Float32Array.from(b));
+    }
+
+    // 裁到限定框内
+    const hiddenByGroup = new Map();
+    for (const [k, uv] of grouped) {
+      const clipped = clipSegmentsToRect(uv, rect);
+      if (clipped.length < 4) continue;
+      segs += clipped.length / 4;
+      edgesByGroup.set(k, clipped);
+      // 图册模式要画隐藏边虚线：把该组隐藏段同样裁剪备用
+      if (plate && groupedRaw) {
+        const raw = groupedRaw.get(k);
+        if (raw && raw.hidden && raw.hidden.length >= 4) {
+          const hc = clipSegmentsToRect(raw.hidden, rect);
+          if (hc.length >= 4) hiddenByGroup.set(k, hc);
+        }
+      }
+    }
+    if (hiddenByGroup.size) {
+      for (const [k, hidden] of hiddenByGroup) {
+        const rec = edgesByGroup.get(k);
+        if (rec) edgesByGroup.set(k, { visible: rec, hidden });
+      }
+    }
+
+    sheetData = buildSheet(groups, {
+      mode: 'single',
+      frameMode: true,
+      edgesByGroup,
+      sheet: { width: A4.width, height: A4.height },
+      sourceName: (S.docName || 'JT Model'),
+      hotspotByGroup: hotspotByGroup.size ? hotspotByGroup : null,
+      // 取景框模式：框里能看到的分组都转 2D 并标号
+      labelUnmatched: true,
+      drawLegend: spEl('spLegend').checked,
+      hotspotPositions: SP.aiPositions,
+      linkSegments,
+      projectPoint: projectPointFrame,
+      plate,
+      drawingNo,
+    });
+  } else {
+    /* ---------- 常规模式：按视向正交投影，自动排版 ---------- */
+    const basis = basisFor(SP.view);
+
+    if (SP.mode === 'single' || plate) {
+      /*
+       * 整机（叠加）：**整个装配一起投影、一起消隐**。
+       *
+       * 以前是逐组投影 + 逐组消隐，问题是每个零件只跟自己比深度，
+       * 外壳挡不住里面的零件 —— 图上会出现一大堆内部线。
+       * 一次性投影所有叶子、做一次全局消隐，再按 owner 拆回各组，
+       * 才是"从外面看进去"的正确结果。
+       *
+       * 图册版面只有一张整机视图，所以也走这条路径。
+       */
+      const allKeys = [];
+      for (const g of groups) for (const k of g.leafKeys) allKeys.push(k);
+      const proj = projectGroup(S.meshes, allKeys, basis, 25);
+      let hiddenRaw = null;
+      const groupedRaw = hlr ? removeHiddenLinesGrouped(proj, {}) : null;
+      if (groupedRaw) hiddenRaw = removeHiddenLinesGroupedVisible(groupedRaw);
+      const grouped = groupedRaw
+        ? hiddenRaw
+        : (() => {
+            // 不消隐：按 owner 直接拆
+            const m = new Map();
+            const owner = proj.edges.owner || new Int32Array(0);
+            const acc = allKeys.map(() => []);
+            for (let i = 0; i < owner.length; i++) {
+              const gi = owner[i];
+              if (!acc[gi]) continue;
+              acc[gi].push(proj.edges.uv[i * 4], proj.edges.uv[i * 4 + 1],
+                           proj.edges.uv[i * 4 + 2], proj.edges.uv[i * 4 + 3]);
+            }
+            allKeys.forEach((k, gi) => { if (acc[gi].length >= 4) m.set(k, Float32Array.from(acc[gi])); });
+            return m;
+          })();
+
+      // 组 → 该组所有叶子拼起来（图册模式把隐藏段也拼上，画虚线）
+      for (const g of groups) {
+        const buf = [];
+        const bufH = [];
+        for (const k of g.leafKeys) {
+          const e = grouped.get(k);
+          if (e) for (let i = 0; i < e.length; i++) buf.push(e[i]);
+          if (groupedRaw) {
+            const raw = groupedRaw.get(k);
+            if (raw && raw.hidden) for (let i = 0; i < raw.hidden.length; i++) bufH.push(raw.hidden[i]);
+          }
+        }
+        if (buf.length < 4) continue;
+        segs += buf.length / 4;
+        if (plate && bufH.length >= 4) {
+          edgesByGroup.set(g.key, { visible: Float32Array.from(buf), hidden: Float32Array.from(bufH) });
+        } else {
+          edgesByGroup.set(g.key, Float32Array.from(buf));
+        }
+      }
+    } else {
+      // 分格：每个零件单独一格，逐组消隐就是对的
+      for (const g of groups) {
+        const proj = projectGroup(S.meshes, g.leafKeys, basis, 25);
+        const uv = hlr ? removeHiddenLines(proj, {}) : proj.edges.uv;
+        if (uv.length < 4) continue;
+        segs += uv.length / 4;
+        edgesByGroup.set(g.key, uv);
+      }
+    }
+
+    sheetData = buildSheet(groups, {
+      mode: SP.mode,
+      edgesByGroup,
+      sheet: { width: A4.width, height: A4.height },
+      sourceName: (S.docName || 'JT Model'),
+      hotspotByGroup: hotspotByGroup.size ? hotspotByGroup : null,
+      labelUnmatched: plate ? true : spEl('spUnmatched').checked,
+      drawLegend: spEl('spLegend').checked,
+      hotspotPositions: SP.aiPositions,
+      linkSegments: collectLinkWorldSegments(),
+      plate,
+      drawingNo,
+      projectPoint: (x, y, z) => {
+        // 正交基底（与边线同一套 right/up）
+        const b = basisFor(SP.view);
+        return [b.right.x * x + b.right.y * y + b.right.z * z,
+                b.up.x * x + b.up.y * y + b.up.z * z];
+      },
+    });
+  }
+
+  SP.sheetData = sheetData;
+  window.__sp = SP;   // 调试：供自动化脚本读取出图结果
+  const dt = Math.round(performance.now() - t0);
+  const how = (FR.on && FR.px) ? '取景框' : (plate ? '图册' : (SP.mode === 'grid' ? '分格' : '整机'));
+  spLog(`<span class="ok">✓ 出图完成</span>（${how}）  分组 ${edgesByGroup.size} 个，`
+    + `线段 ${segs} 条，热点 ${sheetData.hotspots.length} 个，${sheetData.pageCount} 页，${dt} ms`);
+  spEl('spPreview').disabled = false;
+  return sheetData;
+}
+
+/* ============================ AI 自动布点 ============================ */
+/*
+ * 用户自己填接口地址 / Key / 模型名（存在 localStorage，只留在本机）。
+ * 点「AI 布点」→ 把排版问题（可用区、锚点、零件包围盒、最小间距）发给模型
+ * → 模型返回每个热点的 mm 坐标 → 交给 buildSheet 的 hotspotPositions 应用。
+ * 之后仍会走一遍夹取 + 去重叠 + 网格回落，所以模型给的坐标再离谱也不会画飞。
+ */
+const AI_STORE = 'jtbrowser.ai.v1';
+
+function aiLoadConfig() {
+  let cfg = {};
+  try { cfg = JSON.parse(localStorage.getItem(AI_STORE) || '{}'); } catch (e) { cfg = {}; }
+  spEl('aiUrl').value = cfg.url || '';
+  spEl('aiKey').value = cfg.key || '';
+  spEl('aiModel').value = cfg.model || '';
+  return cfg;
+}
+
+function aiSaveConfig() {
+  const cfg = {
+    url: spEl('aiUrl').value.trim(),
+    key: spEl('aiKey').value.trim(),
+    model: spEl('aiModel').value.trim(),
+  };
+  try { localStorage.setItem(AI_STORE, JSON.stringify(cfg)); } catch (e) { /* 忽略 */ }
+  return cfg;
+}
+
+function aiStatus(html) { spEl('aiStatus').innerHTML = html; }
+
+spEl('btnAiPlace').addEventListener('click', async () => {
+  const cfg = aiSaveConfig();
+  if (!cfg.url) { aiStatus('<span class="bad">先填接口地址</span>'); return; }
+  if (!cfg.model) { aiStatus('<span class="bad">先填模型名，例如 deepseek-chat</span>'); return; }
+
+  spEl('btnAiPlace').disabled = true;
+  aiStatus('生成图纸基线 …');
+  try {
+    // 1) 先按本地算法排一版，拿锚点和包围盒
+    const base = await spBuild();
+    if (!base) throw new Error('先打开模型并出图');
+    if (!base.hotspots.length) throw new Error('没有热点可布（先在左边分组或导入 Excel）');
+
+    const rect = (FR.on && FR.a4)
+      ? { x0: FR.a4.x0, y0: FR.a4.y0, x1: FR.a4.x1, y1: FR.a4.y1 }
+      : { x0: 12, y0: 32, x1: 198, y1: 285 };
+
+    aiStatus(`请求模型（${base.hotspots.length} 个热点）…`);
+    const payload = buildPlacementPayload(base, { rect });
+    const t0 = performance.now();
+    const { map, usage } = await aiPlaceHotspots(cfg, payload);
+    const dt = Math.round(performance.now() - t0);
+
+    const stat = sanitizePositions(map, base, rect);
+    SP.aiPositions = Object.fromEntries(map);
+    SP.sheetData = null;
+
+    // 2) 用 AI 坐标重排
+    const data = await spBuild();
+    const chk = data ? checkHotspotOverlap(data) : { overlaps: -1 };
+    const tok = usage ? `　tokens ${usage.total_tokens ?? '?'}` : '';
+    aiStatus(
+      `<span class="ok">✓ AI 布点完成</span> ${stat.applied}/${base.hotspots.length} 个`
+      + `　${dt}ms${tok}<br>越界已修正 ${stat.clamped} 个；重叠 ${chk.overlaps} 个`
+      + (stat.missing.length ? `<br><span class="warn">模型漏了 ${stat.missing.length} 个：${stat.missing.slice(0, 8).join(',')}</span>` : '')
+    );
+
+    // 3) 刷新预览
+    if (data) {
+      spEl('spPreviewInner').innerHTML = sheetToSVGMultiPage(data);
+      spEl('spPreviewBox').style.display = 'block';
+    }
+  } catch (err) {
+    aiStatus('<span class="bad">AI 布点失败：' + (err && err.message ? err.message : err) + '</span>');
+  } finally {
+    spEl('btnAiPlace').disabled = false;
+  }
+});
+
+spEl('btnAiClear').addEventListener('click', async () => {
+  SP.aiPositions = null;
+  SP.sheetData = null;
+  aiStatus('已清除 AI 结果，回到本地排版');
+  const data = await spBuild();
+  if (data) {
+    spEl('spPreviewInner').innerHTML = sheetToSVGMultiPage(data);
+    spEl('spPreviewBox').style.display = 'block';
+  }
+});
+
+aiLoadConfig();
+['aiUrl', 'aiKey', 'aiModel'].forEach((id) => {
+  spEl(id).addEventListener('change', aiSaveConfig);
+});
+
+/* ---- 预览 ---- */
+spEl('spPreview').addEventListener('click', async () => {
+  const data = await spBuild();
+  if (!data) return;
+  const svg = sheetToSVGMultiPage(data);
+  spEl('spPreviewInner').innerHTML = svg;
+  spEl('spPreviewBox').style.display = 'block';
+});
+
+/* ---- 下载 ---- */
+/* ---- 下载：文件名跟着图号走（图册模式下就是图册命名） ---- */
+function sheetFileStem() {
+  if (spEl('spPlate').checked) return plateNameFromUi();
+  return (S.docName || 'drawing').replace(/[\\/:*?"<>|]/g, '_');
+}
+
+spEl('spCgm').addEventListener('click', async () => {
+  const data = SP.sheetData || await spBuild();
+  if (!data) return;
+  const stem = sheetFileStem();
+  const w = sheetToCgm(data, { metafileName: stem + '.cgm' });
+  const bytes = w.toUint8Array();
+  const blob = new Blob([bytes], { type: 'image/cgm' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = stem + '.cgm';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  spLog(`<span class="ok">✓ CGM 已下载</span>  ${stem}.cgm  ${bytes.length} 字节，${w.elementCount} 个元素`);
+});
+
+spEl('spSvg').addEventListener('click', async () => {
+  const data = SP.sheetData || await spBuild();
+  if (!data) return;
+  const stem = sheetFileStem();
+  const svg = sheetPageToSVG(data, 0);
+  const blob = new Blob([svg], { type: 'image/svg+xml' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = stem + '.svg';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  spLog(`<span class="ok">✓ SVG 已下载</span>  ${stem}.svg  ${(svg.length / 1024).toFixed(0)} KB`);
+});
+
+/* ---- 图册三件套：CGM + SVG + GIF（同名、同版式） ---- */
+function plateNameFromUi() {
+  const raw = (spEl('spDrawingNo').value || '').trim();
+  if (raw) return raw;
+  // 没填图号就退回文档名，保证三个文件仍然同名
+  return (S.docName || 'drawing').replace(/[\\/:*?"<>|]/g, '_');
+}
+
+spEl('spPlateExport').addEventListener('click', async () => {
+  const btn = spEl('spPlateExport');
+  btn.disabled = true;
+  try {
+    if (!spEl('spPlate').checked) {
+      spLog('<span class="warn">先勾上「图册」——三件套按图册版式生成</span>');
+      return;
+    }
+    const name = plateNameFromUi();
+    if (!spEl('spDrawingNo').value.trim()) {
+      spLog('<span class="warn">没填图号，先用文档名当文件名</span>');
+    }
+    spLog('正在出图 …');
+    const data = SP.sheetData || await spBuild();
+    if (!data) return;
+
+    const svg = sheetPageToSVG(data, 0);
+    const cgm = sheetToCgm(data, { metafileName: name + '.cgm' }).toUint8Array();
+
+    // Uint8Array → base64（分块，避免 apply 参数过多）
+    let bin = '';
+    const CH = 0x8000;
+    for (let i = 0; i < cgm.length; i += CH) {
+      bin += String.fromCharCode.apply(null, cgm.subarray(i, i + CH));
+    }
+    const cgmB64 = btoa(bin);
+
+    spLog('正在写文件 / 渲染 GIF …');
+    const res = await fetch('/api/export/plate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, svg, cgm: cgmB64 }),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(out.detail || res.statusText);
+
+    const lines = out.files.map((f) =>
+      `<a href="/api/export/file?path=${encodeURIComponent(f.path)}" target="_blank"
+          style="color:#8fd0ff">${f.ext.toUpperCase()}</a> ${(f.size / 1024).toFixed(0)} KB`
+      + `　<span style="color:#6c7a8a">${f.path}</span>`);
+    spLog(`<span class="ok">✓ 已生成 ${out.name}.cgm / .svg / .gif</span>（${out.dir}）\n`
+      + lines.join('\n')
+      + `\n热点 ${data.hotspots.length} 个，重叠 ${checkHotspotOverlap(data).overlaps} 个`);
+  } catch (err) {
+    spLog('<span class="bad">导出失败：' + (err && err.message ? err.message : err) + '</span>');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+spEl('spPlate').addEventListener('change', () => {
+  SP.sheetData = null;
+  spEl('spDrawingNo').disabled = !spEl('spPlate').checked;
+});
+spEl('spDrawingNo').disabled = !spEl('spPlate').checked;
+
+/* ---- 面板开关与选项 ---- */
+spEl('btnSheet').addEventListener('click', () => {
+  const p = spEl('sheetPanel');
+  const show = p.style.display === 'none';
+  spToggle(show);
+  if (show) {
+    if (!SP.rows) spLog('先选一张分组表（Excel / CSV），再点「预览 A4」。\n没有表也能出图，热点会按顺序自动编号。');
+    else spRunMatch();
+  }
+});
+spEl('spClose').addEventListener('click', () => spToggle(false));
+
+spEl('spMode').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-mode]');
+  if (!b) return;
+  SP.mode = b.dataset.mode;
+  SP.sheetData = null;
+  [...e.currentTarget.querySelectorAll('button')].forEach((x) => x.classList.toggle('on', x === b));
+});
+spEl('spView').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-view]');
+  if (!b) return;
+  SP.view = b.dataset.view;
+  SP.sheetData = null;
+  [...e.currentTarget.querySelectorAll('button')].forEach((x) => x.classList.toggle('on', x === b));
+});
+['spLegend', 'spUnmatched', 'spHlr'].forEach((id) => {
+  spEl(id).addEventListener('change', () => { SP.sheetData = null; });
+});
+
+// 打开新文档时清掉旧的出图缓存
+const _origOpenPath = openPath;
+
+/* ============================ A4 取景框 + 拖动数模 ============================ */
+
+/**
+ * 取景框状态。
+ *   on       是否显示
+ *   px       屏幕上限定框（= A4 内容区）的 CSS 像素矩形
+ *   a4       A4 毫米坐标里的内容区（上面留 1/10、下面留 1/5）
+ */
+const FR = { on: false, px: null, a4: null, drag: false };
+
+const viewEl2 = document.getElementById('view');
+const overlayEl = document.getElementById('frameOverlay');
+const boxEl = document.getElementById('frameBox');
+const contentEl = document.getElementById('frameContent');
+const labelEl = document.getElementById('frameLabel');
+
+/** 按 A4 比例在视口里摆一个最大的竖版取景框，并算出"限定框"的位置 */
+function layoutFrame() {
+  const W = viewEl2.clientWidth;
+  const H = viewEl2.clientHeight;
+  if (!W || !H) return;
+  const pad = 16;
+  // A4 竖版 210×297
+  const availH = H - pad * 2;
+  const availW = W - pad * 2;
+  let h = availH;
+  let w = h * (A4.width / A4.height);
+  if (w > availW) { w = availW; h = w * (A4.height / A4.width); }
+  const x = (W - w) / 2;
+  const y = (H - h) / 2;
+
+  boxEl.style.left = x + 'px';
+  boxEl.style.top = y + 'px';
+  boxEl.style.width = w + 'px';
+  boxEl.style.height = h + 'px';
+
+  // 上 1/10、下 1/5 是留白，中间是限定框
+  const topH = h * FRAME.topRatio;
+  const botH = h * FRAME.bottomRatio;
+  boxEl.querySelector('.fz.top').style.height = topH + 'px';
+  boxEl.querySelector('.fz.bottom').style.height = botH + 'px';
+
+  const cy = y + topH;
+  const ch = h - topH - botH;
+  contentEl.style.top = topH + 'px';
+  contentEl.style.height = ch + 'px';
+
+  FR.px = { x, y: cy, w, h: ch };
+  FR.a4 = frameContentRect();
+
+  const mmW = FR.a4.w;
+  const mmH = FR.a4.h;
+  const pxPerMm = w / mmW;
+  labelEl.innerHTML =
+    `限定框 <b>${mmW.toFixed(0)}×${mmH.toFixed(1)}mm</b>　` +
+    `上留 ${(A4.height * FRAME.topRatio).toFixed(1)}mm　下留 ${(A4.height * FRAME.bottomRatio).toFixed(1)}mm　` +
+    `${pxPerMm.toFixed(2)} px/mm`;
+}
+
+function setFrame(on) {
+  FR.on = !!on;
+  overlayEl.classList.toggle('on', FR.on);
+  document.getElementById('btnFrame').classList.toggle('on', FR.on);
+  if (FR.on) {
+    layoutFrame();
+    setStatus('取景框已开：拖动数模把要出图的部分放进绿框');
+  }
+}
+
+/* ---------- 拖动：选中谁就拖谁（单个零件 / 子装配 / 未选中时整体） ---------- */
+const dragState = { active: false, lastX: 0, lastY: 0, moved: 0, targets: [] };
+
+/** 收集某个树节点下所有已加载的零件 group（叶子） */
+function groupsUnder(key) {
+  const out = [];
+  const walk = (k) => {
+    const rec = S.meshes.get(k);
+    if (rec && rec.group) { out.push(rec.group); return; }
+    const node = S.nodeByKey && S.nodeByKey.get(k);
+    if (node) for (const c of node.children || []) walk(c.key);
+  };
+  if (S.nodeByKey && S.nodeByKey.has(key)) walk(key);
+  else {
+    const rec = S.meshes.get(key);
+    if (rec && rec.group) out.push(rec.group);
+  }
+  return out;
+}
+
+/**
+ * 决定这次拖动要移动谁。
+ *
+ * 优先级按"选择层级内的零部件拖动"这条语义定：
+ *   1. **左侧树里选中的节点优先** —— 零件就拖它自己，装配节点拖整棵子树
+ *   2. 没选中任何节点时，才用鼠标射线拾取点中的零件
+ *   3. 还是没有 → 拖整体
+ *
+ * 早先把射线拾取放在前面是错的：在树里选了装配节点再去拖，
+ * 会鼠标底下那个零件抢走，感觉像"只能拖整体 / 拖错了"。
+ */
+function resolveDragTargets(ev) {
+  /*
+   * 1. 多选优先：框选 / Ctrl 多选 / Shift 连选 / 点分组 选中的这些，
+   *    要能**一起移动**。把每个节点展开成它自己的零件 group。
+   */
+  if (S.multiSel.size) {
+    const uniq = [];
+    const seen = new Set();
+    for (const k of S.multiSel) {
+      for (const g of groupsUnder(k)) {
+        if (!g || seen.has(g)) continue;
+        seen.add(g);
+        uniq.push(g);
+      }
+    }
+    if (uniq.length) {
+      return {
+        groups: uniq,
+        label: uniq.length === 1 ? (S.selKey || '选中的零件') : `已选的 ${uniq.length} 个零件`,
+      };
+    }
+  }
+
+  // 2. 树里单选中的节点（selectNode 已经把子树加载好了，这里不用再等）
+  if (S.selKey) {
+    const gs = groupsUnder(S.selKey);
+    if (gs.length) {
+      const isLeaf = !!S.meshes.get(S.selKey);
+      return { groups: gs, label: isLeaf ? S.selKey : `${S.selKey} 子树 ${gs.length} 个零件` };
+    }
+  }
+
+  // 2. 射线拾取
+  const rect = renderer.domElement.getBoundingClientRect();
+  const ndc = new THREE.Vector2(
+    ((ev.clientX - rect.left) / rect.width) * 2 - 1,
+    -((ev.clientY - rect.top) / rect.height) * 2 + 1
+  );
+  const ray = new THREE.Raycaster();
+  ray.setFromCamera(ndc, camera);
+  const bodies = [];
+  for (const [, rec] of S.meshes) if (rec && rec.body && rec.body.visible) bodies.push(rec.body);
+  const hits = ray.intersectObjects(bodies, false);
+  if (hits.length) {
+    const key = hits[0].object.userData.key;
+    if (key) {
+      if (S.selKey !== key) { try { selectNode(key); } catch (e) { /* 忽略 */ } }
+      const rec = S.meshes.get(key);
+      if (rec && rec.group) return { groups: [rec.group], label: key };
+    }
+  }
+
+  // 3. 整体
+  return { groups: [modelRoot], label: '整体' };
+}
+
+/** 状态栏提示当前"会拖谁"（右键拖动） */
+function updateDragHint() {
+  if (S.selKey) {
+    const isLeaf = !!S.meshes.get(S.selKey);
+    const n = groupsUnder(S.selKey).length;
+    setStatus(isLeaf
+      ? `将拖动零件「${S.selKey}」（右键拖）`
+      : `将拖动装配「${S.selKey}」下 ${n} 个零件（右键拖）`, false);
+  } else {
+    setStatus('左键点选零件 / 左键拖转视角 / 中键平移 / 右键拖动选中项', false);
+  }
+}
+
+/** 屏幕像素位移 → 世界位移（沿相机的 right/up） */
+function screenDeltaToWorld(dxPx, dyPx) {
+  const dist = camera.position.distanceTo(controls.target) || 1;
+  const vFov = (camera.fov * Math.PI) / 180;
+  const worldPerPx = (2 * Math.tan(vFov / 2) * dist) / Math.max(viewEl2.clientHeight, 1);
+  const right = new THREE.Vector3();
+  const up = new THREE.Vector3();
+  camera.matrixWorld.extractBasis(right, up, new THREE.Vector3());
+  return new THREE.Vector3()
+    .addScaledVector(right, dxPx * worldPerPx)
+    .addScaledVector(up, -dyPx * worldPerPx);
+}
+
+/* ---------------- 鼠标分工：左键点选 / 右键拖动 ---------------- */
+
+/** 屏幕点 → 命中的零件 key */
+function pickPartAt(clientX, clientY) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  const ndc = new THREE.Vector2(
+    ((clientX - rect.left) / rect.width) * 2 - 1,
+    -((clientY - rect.top) / rect.height) * 2 + 1
+  );
+  const ray = new THREE.Raycaster();
+  ray.setFromCamera(ndc, camera);
+  const bodies = [];
+  for (const [, rec] of S.meshes) if (rec && rec.body && rec.body.visible) bodies.push(rec.body);
+  const hits = ray.intersectObjects(bodies, false);
+  if (!hits.length) return null;
+  return hits[0].object.userData.key || null;
+}
+
+/** 一个零件的世界包围盒 → 屏幕矩形（用于框选命中） */
+const _tmpBox = new THREE.Box3();
+const _tmpV = new THREE.Vector3();
+function partScreenRect(rec) {
+  if (!rec || !rec.body) return null;
+  const geo = rec.body.geometry;
+  if (!geo.boundingBox) geo.computeBoundingBox();
+  _tmpBox.copy(geo.boundingBox).applyMatrix4(rec.body.matrixWorld);
+  const c = viewEl.getBoundingClientRect();
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  let anyFront = false;
+  for (let i = 0; i < 8; i++) {
+    _tmpV.set(
+      i & 1 ? _tmpBox.max.x : _tmpBox.min.x,
+      i & 2 ? _tmpBox.max.y : _tmpBox.min.y,
+      i & 4 ? _tmpBox.max.z : _tmpBox.min.z
+    );
+    _tmpV.project(camera);
+    if (_tmpV.z > 1) continue;                 // 在相机背后
+    anyFront = true;
+    const sx = c.left + (_tmpV.x * 0.5 + 0.5) * c.width;
+    const sy = c.top + (-_tmpV.y * 0.5 + 0.5) * c.height;
+    if (sx < x0) x0 = sx; if (sx > x1) x1 = sx;
+    if (sy < y0) y0 = sy; if (sy > y1) y1 = sy;
+  }
+  if (!anyFront) return null;
+  return { x0, y0, x1, y1 };
+}
+
+/** 框选：把屏幕矩形内的零件挑出来（additive = 追加到现有多选） */
+function selectInRect(rx0, ry0, rx1, ry1, additive) {
+  const [x0, x1] = rx0 <= rx1 ? [rx0, rx1] : [rx1, rx0];
+  const [y0, y1] = ry0 <= ry1 ? [ry0, ry1] : [ry1, ry0];
+  const hit = [];
+  for (const [k, rec] of S.meshes) {
+    if (!rec || !rec.body || !rec.body.visible) continue;
+    const r = partScreenRect(rec);
+    if (!r) continue;
+    // 相交判据：包围盒与选框有重叠
+    if (r.x1 < x0 || r.x0 > x1 || r.y1 < y0 || r.y0 > y1) continue;
+    hit.push(k);
+  }
+  if (!additive) S.multiSel.clear();
+  for (const k of hit) S.multiSel.add(k);
+  refreshMultiSelClasses();
+  applyShadeAll();
+  updateGroupUI();
+  if (hit.length) {
+    S.selKey = hit[hit.length - 1];
+    S.lastClickedKey = S.selKey;
+    try { showNodeInfo(S.selKey); } catch (e) { /* 忽略 */ }
+  }
+  setStatus(hit.length
+    ? `框选：${hit.length} 个零件${additive ? '（追加）' : ''}`
+    : `框选：没有命中零件${additive ? '' : '，已清空选择'}`, false);
+  return hit;
+}
+
+/* ---- 左键：点选 / 框选；Alt+左键 = 转视角 ---- */
+const clickState = { down: false, x: 0, y: 0, sx: 0, sy: 0, moved: 0, boxing: false, rotate: false };
+
+const bandEl = document.getElementById('rubberBand');
+
+/*
+ * 关键：OrbitControls 在 canvas 上注册的 pointerdown 比我们早，
+ * 在同元素上按注册顺序触发，所以我们改 enableRotate 时它已经处理完了 → 转不动。
+ * 解决办法：在**父元素 #view 上用捕获阶段**，抢在 canvas 的监听之前决定能不能转。
+ */
+viewEl.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  controls.enableRotate = !!e.altKey;
+}, true);
+viewEl.addEventListener('pointerup', () => {
+  controls.enableRotate = false;
+}, true);
+
+function updateBand(x0, y0, x1, y1) {
+  const c = viewEl.getBoundingClientRect();
+  const left = Math.min(x0, x1) - c.left;
+  const top = Math.min(y0, y1) - c.top;
+  bandEl.style.left = left + 'px';
+  bandEl.style.top = top + 'px';
+  bandEl.style.width = Math.abs(x1 - x0) + 'px';
+  bandEl.style.height = Math.abs(y1 - y0) + 'px';
+}
+
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  clickState.down = true;
+  clickState.sx = e.clientX;
+  clickState.sy = e.clientY;
+  clickState.x = e.clientX;
+  clickState.y = e.clientY;
+  clickState.moved = 0;
+  clickState.boxing = false;
+  clickState.rotate = e.altKey;
+  // Alt+左键才让 OrbitControls 转视角
+  controls.enableRotate = !!e.altKey;
+  if (e.altKey) {
+    clickState.down = false;      // 交给 OrbitControls
+  }
+});
+
+renderer.domElement.addEventListener('pointermove', (e) => {
+  if (!clickState.down) return;
+  clickState.moved += Math.abs(e.clientX - clickState.x) + Math.abs(e.clientY - clickState.y);
+  clickState.x = e.clientX;
+  clickState.y = e.clientY;
+  // 拖出 4px 就开始显示选框
+  if (clickState.moved > 4) {
+    if (!clickState.boxing) {
+      clickState.boxing = true;
+      bandEl.style.display = 'block';
+    }
+    updateBand(clickState.sx, clickState.sy, e.clientX, e.clientY);
+  }
+});
+
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (e.button !== 0) return;
+  controls.enableRotate = false;          // 松手就关掉旋转
+  if (!clickState.down) return;
+  clickState.down = false;
+  const wasBoxing = clickState.boxing;
+  clickState.boxing = false;
+  bandEl.style.display = 'none';
+
+  const additive = e.shiftKey || e.ctrlKey || e.metaKey;
+
+  if (wasBoxing) {
+    selectInRect(clickState.sx, clickState.sy, e.clientX, e.clientY, additive);
+    return;
+  }
+
+  // 点选
+  const key = pickPartAt(e.clientX, e.clientY);
+  if (key) {
+    if (additive) {
+      toggleMultiSelect(key);
+      setStatus(`已${S.multiSel.has(key) ? '加入' : '移出'}选择：${key}（共 ${S.multiSel.size} 个）`, false);
+    } else {
+      S.multiSel.clear();
+      refreshMultiSelClasses();
+      S.lastClickedKey = key;
+      try { selectNode(key); } catch (err) { /* 忽略 */ }
+      setStatus(`已选中：${key}`, false);
+    }
+  } else if (!additive && (S.selKey || S.multiSel.size)) {
+    S.multiSel.clear();
+    refreshMultiSelClasses();
+    applyShadeAll();
+    setStatus('已清空选择', false);
+  }
+});
+
+/* ---- 右键：拖动选中的零件/装配 ---- */
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (e.button !== 2) return;
+  e.preventDefault();
+  // IPC 锁定判断：选中的是锁定的 IPC 就不给拖
+  if (S.selIpcId) {
+    const ipc = S.ipcs.find((x) => x.id === S.selIpcId);
+    if (ipc && ipc.locked) {
+      setStatus(`IPC「${ipc.name}」是锁定的，先点 🔒 解锁再拖`, false, true);
+      return;
+    }
+  }
+  const t = resolveDragTargets(e);
+  if (!t.groups.length) { setStatus('这里没有可移动的对象', false, true); return; }
+  pushUndo();                                    // 拖之前先存一份，供 Ctrl+Z
+  dragState.active = true;
+  dragState.targets = t.groups;
+  dragState.label = t.label;
+  dragState.lastX = e.clientX;
+  dragState.lastY = e.clientY;
+  dragState.moved = 0;
+  dragState.button = 2;
+  renderer.domElement.classList.add('dragging');
+  renderer.domElement.setPointerCapture(e.pointerId);
+  setStatus(`拖动：${t.label}`, false);
+});
+
+renderer.domElement.addEventListener('pointermove', (e) => {
+  if (!dragState.active) return;
+  const dx = e.clientX - dragState.lastX;
+  const dy = e.clientY - dragState.lastY;
+  dragState.lastX = e.clientX;
+  dragState.lastY = e.clientY;
+  dragState.moved += Math.abs(dx) + Math.abs(dy);
+  if (!dx && !dy) return;
+  const w = screenDeltaToWorld(dx, dy);
+  // 拖整体时目标是 modelRoot 本身
+  if (dragState.targets.length === 1 && dragState.targets[0] === modelRoot) {
+    modelRoot.position.add(w);
+    return;
+  }
+  // 拖零件：按父级的逆矩阵把"世界位移"换算成"父级局部位移"
+  for (const g of dragState.targets) {
+    const parent = g.parent;
+    if (!parent) continue;
+    parent.updateWorldMatrix(true, false);
+    const p0 = new THREE.Vector3();
+    g.getWorldPosition(p0);
+    const p1 = p0.clone().add(w);
+    parent.worldToLocal(p1);
+    g.position.copy(p1);
+  }
+  updateExplodeLines();          // 拖动过程中实时更新爆炸引线
+  updateLinkLines();             // 连线端点绑在零件上，跟着动
+});
+
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!dragState.active) return;
+  dragState.active = false;
+  renderer.domElement.classList.remove('dragging');
+  try { renderer.domElement.releasePointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
+  if (dragState.moved > 2) {
+    updateIpcOffsets();
+    const nL = updateExplodeLines();
+    setStatus(`已移动：${dragState.label}（爆炸引线 ${nL} 条，点"复位"可还原）`, false);
+  }
+  dragState.targets = [];
+});
+
+/** 把动过的零件全部还原到装配原位 */
+/* ============================ 爆炸引线 ============================ */
+/*
+ * 零件被拖离原位后，从"装配原位"到"现在的位置"画一条引线，
+ * 就是爆炸图（exploded view）的那种装配轴线。
+ * 用一条 LineSegments 批量画，拖动时实时更新。
+ */
+const explodeGeo = new THREE.BufferGeometry();
+explodeGeo.setAttribute('position', new THREE.Float32BufferAttribute([], 3));
+const explodeMat = new THREE.LineDashedMaterial({
+  color: 0xffc63a, dashSize: 0.35, gapSize: 0.22,
+  transparent: true, opacity: 0.85, depthTest: false,
+});
+const explodeLines = new THREE.LineSegments(explodeGeo, explodeMat);
+explodeLines.renderOrder = 9;
+explodeLines.frustumCulled = false;
+scene.add(explodeLines);
+
+/** 小圆点标在原位 */
+const explodeDotsGeo = new THREE.BufferGeometry();
+explodeDotsGeo.setAttribute('position', new THREE.Float32BufferAttribute([], 3));
+const explodeDots = new THREE.Points(explodeDotsGeo, new THREE.PointsMaterial({
+  color: 0xffc63a, size: 3, sizeAttenuation: false,
+  transparent: true, opacity: 0.9, depthTest: false,
+}));
+explodeDots.renderOrder = 9;
+explodeDots.frustumCulled = false;
+scene.add(explodeDots);
+
+/** 重建爆炸引线（拖动中/复位后都要调） */
+/**
+ * 爆炸图引线：从**原本与它配合的另一个零件的切面位置**，连到该分组当前的位置。
+ *
+ * 没有 B-Rep，所以"配合面"用包围盒近似：
+ *   1. 把一起移动的零件按"位移相同"归成一个爆炸组（一次拖动 = 一组）
+ *   2. 组内零件的原始包围盒求并集 → 组原位
+ *   3. 在**没动过的零件**里找离组原位最近的（就是它原先装在上面那个数模）
+ *   4. 该零件包围盒上离组原位最近的点 = 朝向它的那个切面位置
+ *   5. 从那个切面点画到组的当前位置
+ *
+ * 用户说"一般情况一个最大切面就行"，所以**一个爆炸组只画一条线**。
+ */
+function updateExplodeLines() {
+  const pts = [];
+  const dots = [];
+  modelRoot.updateMatrixWorld(true);
+
+  const box = new THREE.Box3();
+  const tmp = new THREE.Box3();
+
+  // 收集动过的零件，按位移（四舍五入到 1e-4）分组
+  const moved = [];
+  for (const [k, rec] of S.meshes) {
+    if (!rec || !rec.group) continue;
+    const p = rec.group.position;
+    if (p.lengthSq() < 1e-12) continue;
+    const dk = `${p.x.toFixed(4)},${p.y.toFixed(4)},${p.z.toFixed(4)}`;
+    moved.push({ k, rec, dk });
+  }
+  if (!moved.length) {
+    explodeGeo.setAttribute('position', new THREE.Float32BufferAttribute([], 3));
+    explodeDotsGeo.setAttribute('position', new THREE.Float32BufferAttribute([], 3));
+    explodeLines.visible = false;
+    explodeDots.visible = false;
+    return 0;
+  }
+
+  const groups = new Map();          // dk → [rec]
+  for (const m of moved) {
+    if (!groups.has(m.dk)) groups.set(m.dk, []);
+    groups.get(m.dk).push(m.rec);
+  }
+
+  // 没动过的零件（潜在的"配合件"）
+  const statics = [];
+  for (const [, rec] of S.meshes) {
+    if (!rec || !rec.group) continue;
+    if (rec.group.position.lengthSq() > 1e-12) continue;
+    if (!rec.body) continue;
+    if (!rec.body.geometry.boundingBox) rec.body.geometry.computeBoundingBox();
+    tmp.copy(rec.body.geometry.boundingBox).applyMatrix4(rec.body.matrixWorld);
+    statics.push({ rec, box: tmp.clone() });
+  }
+
+  const origBox = (rec) => {
+    // 临时把位移清零算"原位"包围盒
+    const g = rec.group;
+    const saved = g.position.clone();
+    g.position.set(0, 0, 0);
+    g.updateMatrixWorld(true);
+    const b = new THREE.Box3();
+    if (!rec.body.geometry.boundingBox) rec.body.geometry.computeBoundingBox();
+    b.copy(rec.body.geometry.boundingBox).applyMatrix4(rec.body.matrixWorld);
+    g.position.copy(saved);
+    g.updateMatrixWorld(true);
+    return b;
+  };
+
+  for (const [, recs] of groups) {
+    // 组原位 + 组当前位置
+    const gOrig = new THREE.Box3();
+    const gNow = new THREE.Box3();
+    for (const rec of recs) {
+      gOrig.union(origBox(rec));
+      tmp.copy(rec.body.geometry.boundingBox).applyMatrix4(rec.body.matrixWorld);
+      gNow.union(tmp);
+    }
+    const origCenter = gOrig.getCenter(new THREE.Vector3());
+    const nowCenter = gNow.getCenter(new THREE.Vector3());
+
+    // 找最近的静止零件 = 原先配合的那个数模
+    let mate = null;
+    let mateDist = Infinity;
+    for (const s of statics) {
+      const d = s.box.distanceToPoint(origCenter);
+      if (d < mateDist) { mateDist = d; mate = s; }
+    }
+
+    // 切面点：配合件包围盒上离"组原位"最近的点
+    let fromPoint;
+    if (mate) {
+      fromPoint = mate.box.clampPoint(origCenter, new THREE.Vector3());
+    } else {
+      fromPoint = origCenter.clone();      // 没有其它零件就退回原位中心
+    }
+
+    pts.push(fromPoint.x, fromPoint.y, fromPoint.z, nowCenter.x, nowCenter.y, nowCenter.z);
+    dots.push(fromPoint.x, fromPoint.y, fromPoint.z);
+  }
+
+  explodeGeo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  explodeGeo.computeBoundingSphere();
+  explodeLines.computeLineDistances();
+  explodeDotsGeo.setAttribute('position', new THREE.Float32BufferAttribute(dots, 3));
+  explodeDotsGeo.computeBoundingSphere();
+  const any = pts.length > 0;
+  explodeLines.visible = any;
+  explodeDots.visible = any;
+  return pts.length / 6;
+}
+
+function resetPositions() {
+  if (typeof pushUndo === 'function') pushUndo();
+  let n = 0;
+  for (const [, rec] of S.meshes) {
+    if (rec && rec.group && (rec.group.position.lengthSq() > 0)) {
+      rec.group.position.set(0, 0, 0);
+      n++;
+    }
+  }
+  modelRoot.position.set(0, 0, 0);
+  updateExplodeLines();
+  if (typeof updateLinkLines === 'function') updateLinkLines();
+  if (typeof updateIpcOffsets === 'function') updateIpcOffsets();
+  setStatus(n ? `已复位 ${n} 个零件的位置` : '没有移动过的零件');
+}
+
+/* 按钮绑定 */
+document.getElementById('btnFrame').addEventListener('click', () => setFrame(!FR.on));
+
+document.getElementById('btnReset').addEventListener('click', resetPositions);
+
+/* ============================ 3D 连线 ============================ */
+/*
+ * 在 3D 里点两个点连一条线，这条线会画进 2D 图纸。
+ * 端点绑在零件上（存零件局部坐标），所以零件被拖走时线会跟着走 —— 爆炸图里很关键。
+ */
+const linkGeo = new THREE.BufferGeometry();
+linkGeo.setAttribute('position', new THREE.Float32BufferAttribute([], 3));
+const linkMat = new THREE.LineBasicMaterial({ color: 0x5fe0d0, transparent: true, opacity: 0.95, depthTest: false });
+const linkLines = new THREE.LineSegments(linkGeo, linkMat);
+linkLines.renderOrder = 11;
+linkLines.frustumCulled = false;
+scene.add(linkLines);
+
+// 待连接的第一个点用一个小球标出来
+const linkDot = new THREE.Mesh(
+  new THREE.SphereGeometry(0.06, 12, 12),
+  new THREE.MeshBasicMaterial({ color: 0xffc63a, depthTest: false })
+);
+linkDot.renderOrder = 12;
+linkDot.visible = false;
+scene.add(linkDot);
+
+/** 端点世界坐标（端点绑零件，跟着零件动） */
+function linkPointWorld(ep) {
+  const rec = S.meshes.get(ep.key);
+  if (!rec || !rec.body) return null;
+  rec.body.updateWorldMatrix(true, false);
+  const v = new THREE.Vector3(ep.local[0], ep.local[1], ep.local[2]);
+  return v.applyMatrix4(rec.body.matrixWorld);
+}
+
+/// 给出一组世界坐标端点对，供 2D 出图使用
+function collectLinkWorldSegments() {
+  const out = [];
+  for (const lk of S.links) {
+    const a = linkPointWorld(lk.a);
+    const b = linkPointWorld(lk.b);
+    if (a && b) out.push({ a: [a.x, a.y, a.z], b: [b.x, b.y, b.z] });
+  }
+  return out;
+}
+
+function updateLinkLines() {
+  const pts = [];
+  for (const lk of S.links) {
+    const a = linkPointWorld(lk.a);
+    const b = linkPointWorld(lk.b);
+    if (!a || !b) continue;
+    pts.push(a.x, a.y, a.z, b.x, b.y, b.z);
+  }
+  linkGeo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  linkGeo.computeBoundingSphere();
+  linkLines.visible = pts.length > 0;
+}
+
+function setLinkMode(on) {
+  S.linkMode = !!on;
+  document.getElementById('btnLink').classList.toggle('on', S.linkMode);
+  if (!S.linkMode) {
+    S.linkPending = null;
+    linkDot.visible = false;
+    setStatus('连线模式已关闭', false);
+  } else {
+    setStatus('连线模式：点第一个零件上的点，再点第二个；Esc 退出', false);
+  }
+}
+
+/** 射线取点：返回 {key, local, world} */
+function pickPoint3D(clientX, clientY) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  const ndc = new THREE.Vector2(
+    ((clientX - rect.left) / rect.width) * 2 - 1,
+    -((clientY - rect.top) / rect.height) * 2 + 1
+  );
+  const ray = new THREE.Raycaster();
+  ray.setFromCamera(ndc, camera);
+  const bodies = [];
+  for (const [, rec] of S.meshes) if (rec && rec.body && rec.body.visible) bodies.push(rec.body);
+  const hits = ray.intersectObjects(bodies, false);
+  if (!hits.length) return null;
+  const hit = hits[0];
+  const key = hit.object.userData.key;
+  const rec = S.meshes.get(key);
+  if (!rec) return null;
+  rec.body.updateWorldMatrix(true, false);
+  const local = hit.point.clone().applyMatrix4(new THREE.Matrix4().copy(rec.body.matrixWorld).invert());
+  return { key, local: [local.x, local.y, local.z], world: hit.point.clone() };
+}
+
+document.getElementById('btnLink').addEventListener('click', () => setLinkMode(!S.linkMode));
+
+/* 连线模式下拦截左键点击（在框选/选取之前处理） */
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (!S.linkMode || e.button !== 0) return;
+  e.stopPropagation();
+  const p = pickPoint3D(e.clientX, e.clientY);
+  if (!p) { setStatus('没点到零件，再点一次', false); return; }
+  if (!S.linkPending) {
+    S.linkPending = p;
+    linkDot.position.copy(p.world);
+    linkDot.visible = true;
+    setStatus('已取第一点，点第二点完成连线', false);
+    return;
+  }
+  S.links.push({ id: Date.now().toString(36), a: { key: S.linkPending.key, local: S.linkPending.local }, b: { key: p.key, local: p.local } });
+  S.linkPending = null;
+  linkDot.visible = false;
+  updateLinkLines();
+  SP.sheetData = null;
+  setStatus(`已连线，共 ${S.links.length} 条（会画到 2D 上）`, false);
+}, true);
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && S.linkMode) setLinkMode(false);
+});
+
+/* ============================ 撤销（Ctrl+Z） ============================ */
+/** 记录当前所有零件位置（拖之前调用） */
+function pushUndo() {
+  const snap = { parts: [], root: modelRoot.position.toArray() };
+  for (const [k, rec] of S.meshes) {
+    if (rec && rec.group) snap.parts.push([k, rec.group.position.toArray()]);
+  }
+  S.undoStack.push(snap);
+  if (S.undoStack.length > 100) S.undoStack.shift();
+  updateUndoButtons();
+}
+
+function updateUndoButtons() {
+  const n = S.undoStack.length;
+  for (const id of ['btnUndo', 'btnUndo2']) {
+    const b = document.getElementById(id);
+    if (b) b.disabled = n === 0;
+  }
+}
+
+function undoMove() {
+  const snap = S.undoStack.pop();
+  if (!snap) { setStatus('没有可撤销的移动', false); return; }
+  for (const [k, pos] of snap.parts) {
+    const rec = S.meshes.get(k);
+    if (rec && rec.group) rec.group.position.fromArray(pos);
+  }
+  modelRoot.position.fromArray(snap.root);
+  updateExplodeLines();
+  updateLinkLines();
+  updateIpcOffsets();
+  updateUndoButtons();
+  setStatus(`已撤销一步（还剩 ${S.undoStack.length} 步）`, false);
+}
+
+for (const id of ['btnUndo', 'btnUndo2']) {
+  const b = document.getElementById(id);
+  if (b) b.addEventListener('click', undoMove);
+}
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+    e.preventDefault();
+    undoMove();
+  }
+});
+
+/* ============================ IPC 面板 ============================ */
+/*
+ * IPC = 可移动的装配单元。
+ *   · 初始那个「整体 IPC」锁定，不可移动
+ *   · 自己添加的 IPC 默认解锁，可以右键拖动整组
+ *   · 每个 IPC 显示当前位移，可单独复位
+ */
+
+function ipcLeaves(ipc) {
+  const leaf = new Set();
+  for (const k of ipc.keys) for (const l of leafKeysUnder(k)) leaf.add(l);
+  return leaf;
+}
+
+function ensureRootIpc() {
+  if (S.ipcs.length) return;
+  S.ipcs.push({
+    id: 'root',
+    name: '整体（默认）',
+    keys: S.root ? [S.root.key] : [],
+    locked: true,
+    offset: { x: 0, y: 0, z: 0 },
+  });
+}
+
+function ipcOffsetOf(ipc) {
+  // 取该 IPC 下第一个零件的位移当作代表
+  const leaf = [...ipcLeaves(ipc)];
+  for (const k of leaf) {
+    const rec = S.meshes.get(k);
+    if (rec && rec.group) {
+      const p = rec.group.position;
+      return { x: p.x, y: p.y, z: p.z };
+    }
+  }
+  return { x: 0, y: 0, z: 0 };
+}
+
+function updateIpcOffsets() {
+  for (const ipc of S.ipcs) ipc.offset = ipcOffsetOf(ipc);
+  renderIpcs();
+}
+
+function renderIpcs() {
+  ensureRootIpc();
+  const box = document.getElementById('ipcList');
+  const badge = document.getElementById('ipcCount');
+  badge.style.display = '';
+  badge.textContent = `${S.ipcs.length} 个`;
+  box.innerHTML = '';
+  S.ipcs.forEach((ipc, i) => {
+    const el = document.createElement('div');
+    el.className = 'ipc-item' + (S.selIpcId === ipc.id ? ' sel' : '');
+
+    const nm = document.createElement('span');
+    nm.className = 'iname';
+    nm.textContent = ipc.name;
+    nm.title = '点击选中整组；双击改名';
+    nm.addEventListener('click', () => selectIpc(ipc));
+    nm.addEventListener('dblclick', (ev) => {
+      ev.stopPropagation();
+      nm.contentEditable = 'true';
+      nm.focus();
+      document.getSelection().selectAllChildren(nm);
+    });
+    nm.addEventListener('blur', () => {
+      nm.contentEditable = 'false';
+      const v = nm.textContent.trim();
+      if (v) ipc.name = v; else nm.textContent = ipc.name;
+    });
+    nm.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); nm.blur(); } });
+
+    const off = document.createElement('span');
+    off.className = 'ioff';
+    const o = ipc.offset || { x: 0, y: 0, z: 0 };
+    const len = Math.hypot(o.x, o.y, o.z);
+    off.textContent = len < 1e-4 ? '原位' : `${len.toFixed(2)}`;
+
+    const lock = document.createElement('button');
+    lock.textContent = ipc.locked ? '🔒' : '🔓';
+    lock.className = ipc.locked ? 'lock-on' : '';
+    lock.title = ipc.locked ? '已锁定（不可移动），点击解锁' : '可移动，点击锁定';
+    lock.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      ipc.locked = !ipc.locked;
+      renderIpcs();
+      setStatus(`IPC「${ipc.name}」${ipc.locked ? '已锁定' : '已解锁'}`, false);
+    });
+
+    const rs = document.createElement('button');
+    rs.textContent = '复位';
+    rs.title = '把该 IPC 下的零件移回原位';
+    rs.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (ipc.locked) { setStatus('锁定的 IPC 不能移动/复位', false, true); return; }
+      pushUndo();
+      let n = 0;
+      for (const k of ipcLeaves(ipc)) {
+        const rec = S.meshes.get(k);
+        if (rec && rec.group && rec.group.position.lengthSq() > 0) { rec.group.position.set(0, 0, 0); n++; }
+      }
+      updateExplodeLines(); updateLinkLines(); updateIpcOffsets();
+      setStatus(`IPC「${ipc.name}」复位 ${n} 个零件`, false);
+    });
+
+    const del = document.createElement('button');
+    del.textContent = '删';
+    del.title = ipc.id === 'root' ? '默认 IPC 不能删除' : '删除这个 IPC';
+    del.disabled = ipc.id === 'root';
+    del.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (ipc.id === 'root') return;
+      S.ipcs.splice(i, 1);
+      if (S.selIpcId === ipc.id) S.selIpcId = null;
+      renderIpcs();
+    });
+
+    el.append(nm, off, lock, rs, del);
+    box.appendChild(el);
+  });
+  updateUndoButtons();
+}
+
+function selectIpc(ipc) {
+  S.selIpcId = ipc.id;
+  const leaf = ipcLeaves(ipc);
+  S.multiSel = leaf;
+  S.lastClickedKey = [...leaf][0] || null;
+  refreshMultiSelClasses();
+  applyShadeAll();
+  renderIpcs();
+  setStatus(`已选中 IPC「${ipc.name}」：${leaf.size} 个零件${ipc.locked ? '（锁定，右键拖不动）' : '（可右键拖动）'}`, false);
+}
+
+document.getElementById('btnNewIpc').addEventListener('click', () => {
+  const keys = S.multiSel.size ? [...S.multiSel] : (S.selKey ? [S.selKey] : []);
+  if (!keys.length) { setStatus('先在左侧选中节点，再点「+ 添加」', false, true); return; }
+  const n = S.ipcs.length;
+  S.ipcs.push({
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+    name: `IPC ${n}`,
+    keys,
+    locked: false,                 // 新增的默认可移动
+    offset: { x: 0, y: 0, z: 0 },
+  });
+  renderIpcs();
+  setStatus(`已添加 IPC，共 ${S.ipcs.length} 个（新的可移动）`, false);
+});
+
+/* ============================ 启动 ============================ */
+renderIpcs();
+updateLinkLines();
+loadSamples();
+document.getElementById('btnEdges').classList.add('on');
+document.querySelector('#shadeSeg button[data-shade="solid"]').classList.add('on');
+
+// 支持 ?open=<绝对路径> 直接打开
+const qs = new URLSearchParams(location.search);
+if (qs.get('open')) openPath(qs.get('open'));
+// 支持 ?shade=solid|wire|both 预设显示模式
+if (qs.get('shade')){
+  const b = document.querySelector(`#shadeSeg button[data-shade="${qs.get('shade')}"]`);
+  if (b) b.click();
+}
+</script>
+</body>
+</html>
